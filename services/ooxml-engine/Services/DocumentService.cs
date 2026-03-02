@@ -166,9 +166,12 @@ public class DocumentService
     private void AddHeading(Body body, JsonElement block)
     {
         var level = block.TryGetProperty("level", out var l) ? l.GetInt32() : 1;
+        level = Math.Clamp(level, 1, 6);
         var para = new Paragraph();
         var props = new ParagraphProperties(
-            new ParagraphStyleId { Val = $"Heading{level}" }
+            new ParagraphStyleId { Val = $"Heading{level}" },
+            new KeepNext(),
+            new KeepLines()
         );
         para.AppendChild(props);
 
@@ -183,13 +186,22 @@ public class DocumentService
     private void AddParagraph(Body body, JsonElement block)
     {
         var para = new Paragraph();
+        var props = new ParagraphProperties();
+        bool hasExplicitStyle = false;
 
         if (block.TryGetProperty("style", out var style))
         {
-            var props = new ParagraphProperties();
             ApplyParagraphStyle(props, style);
-            para.AppendChild(props);
+            hasExplicitStyle = true;
         }
+
+        // Apply the Normal style by default if no explicit style
+        if (!hasExplicitStyle)
+        {
+            props.AppendChild(new ParagraphStyleId { Val = "Normal" });
+        }
+
+        para.AppendChild(props);
 
         if (block.TryGetProperty("content", out var content))
         {
@@ -224,25 +236,40 @@ public class DocumentService
     {
         var table = new Table();
 
-        // Table properties
+        // Table properties with professional styling
         var tblProps = new TableProperties(
             new TableBorders(
-                new TopBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4 },
-                new BottomBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4 },
-                new LeftBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4 },
-                new RightBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4 },
-                new InsideHorizontalBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4 },
-                new InsideVerticalBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4 }
+                new TopBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "404040" },
+                new BottomBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "404040" },
+                new LeftBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "404040" },
+                new RightBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "404040" },
+                new InsideHorizontalBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "BFBFBF" },
+                new InsideVerticalBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "BFBFBF" }
             ),
-            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct }
+            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
+            new TableCellMarginDefault(
+                new TopMargin { Width = "40", Type = TableWidthUnitValues.Dxa },
+                new StartMargin { Width = "80", Type = TableWidthUnitValues.Dxa },
+                new BottomMargin { Width = "40", Type = TableWidthUnitValues.Dxa },
+                new EndMargin { Width = "80", Type = TableWidthUnitValues.Dxa }
+            ),
+            new TableLook { Val = "04A0", FirstRow = true, LastRow = false, FirstColumn = true, LastColumn = false, NoHorizontalBand = false, NoVerticalBand = true }
         );
         table.AppendChild(tblProps);
 
         if (block.TryGetProperty("rows", out var rows))
         {
+            bool isFirstRow = true;
             foreach (var rowEl in rows.EnumerateArray())
             {
                 var row = new TableRow();
+                bool isHeader = (rowEl.TryGetProperty("is_header", out var hdr) && hdr.GetBoolean()) || isFirstRow;
+
+                if (isHeader)
+                {
+                    var rowProps = new TableRowProperties(new TableHeader());
+                    row.AppendChild(rowProps);
+                }
 
                 if (rowEl.TryGetProperty("cells", out var cells))
                 {
@@ -250,6 +277,9 @@ public class DocumentService
                     {
                         var cell = new TableCell();
                         var cellProps = new TableCellProperties();
+
+                        // Vertical alignment
+                        cellProps.AppendChild(new TableCellVerticalAlignment { Val = TableVerticalAlignmentValues.Center });
 
                         // Handle column span
                         if (cellEl.TryGetProperty("col_span", out var colSpan) && colSpan.GetInt32() > 1)
@@ -263,12 +293,56 @@ public class DocumentService
                             cellProps.AppendChild(new VerticalMerge { Val = MergedCellValues.Restart });
                         }
 
+                        // Header row shading
+                        if (isHeader)
+                        {
+                            cellProps.AppendChild(new Shading { Fill = "F2F2F2", Val = ShadingPatternValues.Clear, Color = "auto" });
+                        }
+
                         cell.AppendChild(cellProps);
 
                         var para = new Paragraph();
+                        var paraProps = new ParagraphProperties(
+                            new SpacingBetweenLines { Before = "0", After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto }
+                        );
+
+                        if (isHeader)
+                        {
+                            // Bold text for header cells
+                            paraProps.AppendChild(new Justification { Val = JustificationValues.Center });
+                        }
+
+                        para.AppendChild(paraProps);
+
                         if (cellEl.TryGetProperty("content", out var content))
                         {
-                            AddInlineContent(para, content);
+                            if (isHeader)
+                            {
+                                // Wrap header cell content in bold runs
+                                if (content.ValueKind == JsonValueKind.Array)
+                                {
+                                    foreach (var inline in content.EnumerateArray())
+                                    {
+                                        var run = new Run();
+                                        var runProps = new RunProperties(new Bold(), new BoldComplexScript());
+                                        run.AppendChild(runProps);
+                                        var textVal = inline.TryGetProperty("text", out var t) ? t.GetString() : "";
+                                        run.AppendChild(new Text(textVal ?? "") { Space = SpaceProcessingModeValues.Preserve });
+                                        para.AppendChild(run);
+                                    }
+                                }
+                                else if (content.ValueKind == JsonValueKind.String)
+                                {
+                                    var run = new Run();
+                                    run.AppendChild(new RunProperties(new Bold(), new BoldComplexScript()));
+                                    run.AppendChild(new Text(content.GetString() ?? "") { Space = SpaceProcessingModeValues.Preserve });
+                                    para.AppendChild(run);
+                                }
+                            }
+                            else
+                            {
+                                AddInlineContent(para, content);
+                            }
                         }
                         cell.AppendChild(para);
 
@@ -277,10 +351,15 @@ public class DocumentService
                 }
 
                 table.AppendChild(row);
+                isFirstRow = false;
             }
         }
 
+        // Add empty paragraph after table for spacing
         body.AppendChild(table);
+        body.AppendChild(new Paragraph(new ParagraphProperties(
+            new SpacingBetweenLines { Before = "0", After = "120" }
+        )));
     }
 
     private void AddFigure(Body body, JsonElement block, MainDocumentPart mainPart)
@@ -304,24 +383,46 @@ public class DocumentService
 
         if (block.TryGetProperty("items", out var items))
         {
-            foreach (var item in items.EnumerateArray())
+            AddListItems(body, items, ordered, 0);
+        }
+    }
+
+    private void AddListItems(Body body, JsonElement items, bool ordered, int level)
+    {
+        foreach (var item in items.EnumerateArray())
+        {
+            var para = new Paragraph();
+            var indentLeft = (360 * (level + 1)).ToString();
+            var hanging = "360";
+
+            var props = new ParagraphProperties(
+                new ParagraphStyleId { Val = ordered ? "ListNumber" : "ListBullet" },
+                new NumberingProperties(
+                    new NumberingLevelReference { Val = level },
+                    new NumberingId { Val = ordered ? 2 : 1 }
+                ),
+                new SpacingBetweenLines { Before = "20", After = "20", Line = "264", LineRule = LineSpacingRuleValues.Auto },
+                new Indentation { Left = indentLeft, Hanging = hanging }
+            );
+            para.AppendChild(props);
+
+            if (item.TryGetProperty("content", out var content))
             {
-                var para = new Paragraph();
-                var props = new ParagraphProperties(
-                    new ParagraphStyleId { Val = ordered ? "ListNumber" : "ListBullet" },
-                    new NumberingProperties(
-                        new NumberingLevelReference { Val = 0 },
-                        new NumberingId { Val = ordered ? 2 : 1 }
-                    )
-                );
-                para.AppendChild(props);
+                AddInlineContent(para, content);
+            }
+            else if (item.ValueKind == JsonValueKind.String)
+            {
+                var run = new Run(new Text(item.GetString() ?? "") { Space = SpaceProcessingModeValues.Preserve });
+                para.AppendChild(run);
+            }
 
-                if (item.TryGetProperty("content", out var content))
-                {
-                    AddInlineContent(para, content);
-                }
+            body.AppendChild(para);
 
-                body.AppendChild(para);
+            // Handle nested sub-lists
+            if (item.TryGetProperty("sub_items", out var subItems))
+            {
+                var subOrdered = item.TryGetProperty("sub_ordered", out var so) && so.GetBoolean();
+                AddListItems(body, subItems, subOrdered, level + 1);
             }
         }
     }
@@ -331,20 +432,33 @@ public class DocumentService
         var para = new Paragraph();
         var props = new ParagraphProperties(
             new ParagraphStyleId { Val = "Code" },
-            new Shading { Fill = "F5F5F5" }
+            new Shading { Fill = "F8F9FA", Val = ShadingPatternValues.Clear, Color = "auto" }
         );
         para.AppendChild(props);
 
         if (block.TryGetProperty("source", out var source))
         {
-            var run = new Run();
-            var runProps = new RunProperties(
-                new RunFonts { Ascii = "Courier New", HighAnsi = "Courier New" },
-                new FontSize { Val = "18" }
-            );
-            run.AppendChild(runProps);
-            run.AppendChild(new Text(source.GetString() ?? "") { Space = SpaceProcessingModeValues.Preserve });
-            para.AppendChild(run);
+            var sourceText = source.GetString() ?? "";
+            // Split by newlines and insert Break elements for multi-line code
+            var codeLines = sourceText.Split('\n');
+            for (int idx = 0; idx < codeLines.Length; idx++)
+            {
+                var run = new Run();
+                var runProps = new RunProperties(
+                    new RunFonts { Ascii = "Consolas", HighAnsi = "Consolas", ComplexScript = "Consolas" },
+                    new FontSize { Val = "18" },
+                    new FontSizeComplexScript { Val = "18" }
+                );
+                run.AppendChild(runProps);
+                run.AppendChild(new Text(codeLines[idx]) { Space = SpaceProcessingModeValues.Preserve });
+                para.AppendChild(run);
+
+                if (idx < codeLines.Length - 1)
+                {
+                    var breakRun = new Run(new Break());
+                    para.AppendChild(breakRun);
+                }
+            }
         }
 
         body.AppendChild(para);
@@ -560,26 +674,54 @@ public class DocumentService
         {
             var jc = align.GetString() switch
             {
-                "Center" => JustificationValues.Center,
-                "Right" => JustificationValues.Right,
-                "Justify" => JustificationValues.Both,
+                "Center" or "center" => JustificationValues.Center,
+                "Right" or "right" => JustificationValues.Right,
+                "Justify" or "justify" => JustificationValues.Both,
                 _ => JustificationValues.Left,
             };
             props.AppendChild(new Justification { Val = jc });
         }
 
+        // Line spacing
         if (style.TryGetProperty("line_spacing_pt", out var spacing))
         {
             props.AppendChild(new SpacingBetweenLines
             {
-                Line = ((int)(spacing.GetDouble() * 20)).ToString()
+                Line = ((int)(spacing.GetDouble() * 20)).ToString(),
+                LineRule = LineSpacingRuleValues.Auto
             });
         }
 
+        // Space before / after paragraph
+        if (style.TryGetProperty("space_before_pt", out var spaceBefore) ||
+            style.TryGetProperty("space_after_pt", out var spaceAfter))
+        {
+            var spacingEl = new SpacingBetweenLines();
+            if (style.TryGetProperty("space_before_pt", out var sb))
+                spacingEl.Before = ((int)(sb.GetDouble() * 20)).ToString();
+            if (style.TryGetProperty("space_after_pt", out var sa))
+                spacingEl.After = ((int)(sa.GetDouble() * 20)).ToString();
+            props.AppendChild(spacingEl);
+        }
+
+        // First-line indent
         if (style.TryGetProperty("indent_first_line_mm", out var indent))
         {
             var twips = (int)(indent.GetDouble() * 56.7);
             props.AppendChild(new Indentation { FirstLine = twips.ToString() });
+        }
+
+        // Left indent
+        if (style.TryGetProperty("indent_left_mm", out var leftIndent))
+        {
+            var twips = (int)(leftIndent.GetDouble() * 56.7);
+            props.AppendChild(new Indentation { Left = twips.ToString() });
+        }
+
+        // Keep with next
+        if (style.TryGetProperty("keep_with_next", out var kwn) && kwn.GetBoolean())
+        {
+            props.AppendChild(new KeepNext());
         }
     }
 
@@ -607,32 +749,161 @@ public class DocumentService
         var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
         var styles = new Styles();
 
-        // Heading styles
-        for (int i = 1; i <= 6; i++)
+        // Document defaults — sets baseline font and spacing for the entire document
+        var docDefaults = new DocDefaults(
+            new RunPropertiesDefault(
+                new RunPropertiesBaseStyle(
+                    new RunFonts
+                    {
+                        Ascii = "Calibri",
+                        HighAnsi = "Calibri",
+                        EastAsia = "Calibri",
+                        ComplexScript = "Calibri"
+                    },
+                    new FontSize { Val = "22" },        // 11pt
+                    new FontSizeComplexScript { Val = "22" },
+                    new Languages { Val = "en-US" }
+                )
+            ),
+            new ParagraphPropertiesDefault(
+                new ParagraphPropertiesBaseStyle(
+                    new SpacingBetweenLines
+                    {
+                        After = "0",
+                        Before = "0",
+                        Line = "240",    // single spacing (240 twips = 12pt)
+                        LineRule = LineSpacingRuleValues.Auto
+                    }
+                )
+            )
+        );
+        styles.AppendChild(docDefaults);
+
+        // Normal style — body text baseline
+        var normalStyle = new Style(
+            new StyleName { Val = "Normal" },
+            new PrimaryStyle(),
+            new StyleParagraphProperties(
+                new SpacingBetweenLines
+                {
+                    After = "120",   // 6pt after each paragraph
+                    Before = "0",
+                    Line = "276",    // 1.15× line spacing
+                    LineRule = LineSpacingRuleValues.Auto
+                },
+                new Justification { Val = JustificationValues.Both }
+            ),
+            new StyleRunProperties(
+                new RunFonts
+                {
+                    Ascii = "Calibri",
+                    HighAnsi = "Calibri",
+                    EastAsia = "Calibri",
+                    ComplexScript = "Calibri"
+                },
+                new FontSize { Val = "22" },        // 11pt
+                new FontSizeComplexScript { Val = "22" }
+            )
+        )
         {
-            var size = 48 - (i * 4); // Decreasing sizes
-            styles.AppendChild(new Style(
-                new StyleName { Val = $"heading {i}" },
+            Type = StyleValues.Paragraph,
+            StyleId = "Normal",
+            Default = true
+        };
+        styles.AppendChild(normalStyle);
+
+        // Heading sizes in half-points and before/after spacing in twips
+        var headingDefs = new (int Level, string SizePt, string Before, string After, bool AllCaps)[]
+        {
+            (1, "32", "360", "120", false),   // 16pt, 18pt before, 6pt after
+            (2, "28", "240", "80", false),    // 14pt, 12pt before, 4pt after
+            (3, "24", "200", "60", false),    // 12pt, 10pt before, 3pt after
+            (4, "22", "160", "40", false),    // 11pt, 8pt before, 2pt after
+            (5, "22", "160", "40", false),    // 11pt
+            (6, "20", "120", "40", false),    // 10pt
+        };
+
+        foreach (var h in headingDefs)
+        {
+            var headingStyle = new Style(
+                new StyleName { Val = $"heading {h.Level}" },
+                new BasedOn { Val = "Normal" },
+                new NextParagraphStyle { Val = "Normal" },
+                new PrimaryStyle(),
+                new StyleParagraphProperties(
+                    new KeepNext(),
+                    new KeepLines(),
+                    new SpacingBetweenLines
+                    {
+                        Before = h.Before,
+                        After = h.After,
+                        Line = "240",
+                        LineRule = LineSpacingRuleValues.Auto
+                    }
+                ),
                 new StyleRunProperties(
                     new Bold(),
-                    new FontSize { Val = size.ToString() }
+                    new BoldComplexScript(),
+                    new RunFonts
+                    {
+                        Ascii = "Calibri",
+                        HighAnsi = "Calibri",
+                        EastAsia = "Calibri",
+                        ComplexScript = "Calibri"
+                    },
+                    new FontSize { Val = h.SizePt },
+                    new FontSizeComplexScript { Val = h.SizePt },
+                    new Color { Val = "1F2937" }
                 )
             )
             {
                 Type = StyleValues.Paragraph,
-                StyleId = $"Heading{i}"
-            });
+                StyleId = $"Heading{h.Level}"
+            };
+            styles.AppendChild(headingStyle);
         }
+
+        // ListBullet style
+        styles.AppendChild(new Style(
+            new StyleName { Val = "List Bullet" },
+            new BasedOn { Val = "Normal" },
+            new StyleParagraphProperties(
+                new SpacingBetweenLines { After = "40", Before = "0" },
+                new Indentation { Left = "720", Hanging = "360" }
+            )
+        )
+        {
+            Type = StyleValues.Paragraph,
+            StyleId = "ListBullet"
+        });
+
+        // ListNumber style
+        styles.AppendChild(new Style(
+            new StyleName { Val = "List Number" },
+            new BasedOn { Val = "Normal" },
+            new StyleParagraphProperties(
+                new SpacingBetweenLines { After = "40", Before = "0" },
+                new Indentation { Left = "720", Hanging = "360" }
+            )
+        )
+        {
+            Type = StyleValues.Paragraph,
+            StyleId = "ListNumber"
+        });
 
         // Code style
         styles.AppendChild(new Style(
             new StyleName { Val = "Code" },
+            new BasedOn { Val = "Normal" },
             new StyleRunProperties(
-                new RunFonts { Ascii = "Courier New", HighAnsi = "Courier New" },
-                new FontSize { Val = "18" }
+                new RunFonts { Ascii = "Consolas", HighAnsi = "Consolas", ComplexScript = "Consolas" },
+                new FontSize { Val = "18" },
+                new FontSizeComplexScript { Val = "18" }
             ),
             new StyleParagraphProperties(
-                new Shading { Fill = "F5F5F5", Val = ShadingPatternValues.Clear }
+                new Shading { Fill = "F5F5F5", Val = ShadingPatternValues.Clear },
+                new SpacingBetweenLines { Before = "80", After = "80", Line = "240" },
+                new Justification { Val = JustificationValues.Left }
             )
         )
         {
@@ -640,7 +911,128 @@ public class DocumentService
             StyleId = "Code"
         });
 
+        // Quote style
+        styles.AppendChild(new Style(
+            new StyleName { Val = "Quote" },
+            new BasedOn { Val = "Normal" },
+            new StyleParagraphProperties(
+                new Indentation { Left = "720", Right = "720" },
+                new SpacingBetweenLines { Before = "120", After = "120" }
+            ),
+            new StyleRunProperties(
+                new Italic(),
+                new Color { Val = "404040" }
+            )
+        )
+        {
+            Type = StyleValues.Paragraph,
+            StyleId = "Quote"
+        });
+
+        // Caption style
+        styles.AppendChild(new Style(
+            new StyleName { Val = "caption" },
+            new BasedOn { Val = "Normal" },
+            new StyleParagraphProperties(
+                new Justification { Val = JustificationValues.Center },
+                new SpacingBetweenLines { Before = "60", After = "120" }
+            ),
+            new StyleRunProperties(
+                new FontSize { Val = "18" },
+                new FontSizeComplexScript { Val = "18" },
+                new Color { Val = "595959" }
+            )
+        )
+        {
+            Type = StyleValues.Paragraph,
+            StyleId = "Caption"
+        });
+
+        // Abstract style
+        styles.AppendChild(new Style(
+            new StyleName { Val = "Abstract" },
+            new BasedOn { Val = "Normal" },
+            new StyleParagraphProperties(
+                new Indentation { Left = "720", Right = "720" },
+                new Justification { Val = JustificationValues.Both },
+                new SpacingBetweenLines { Before = "120", After = "120", Line = "260" }
+            ),
+            new StyleRunProperties(
+                new FontSize { Val = "20" },
+                new FontSizeComplexScript { Val = "20" }
+            )
+        )
+        {
+            Type = StyleValues.Paragraph,
+            StyleId = "Abstract"
+        });
+
+        // Hyperlink character style
+        styles.AppendChild(new Style(
+            new StyleName { Val = "Hyperlink" },
+            new StyleRunProperties(
+                new Color { Val = "0563C1" },
+                new Underline { Val = UnderlineValues.Single }
+            )
+        )
+        {
+            Type = StyleValues.Character,
+            StyleId = "Hyperlink"
+        });
+
         stylesPart.Styles = styles;
+
+        // Add numbering definitions for lists
+        AddNumberingDefinitions(mainPart);
+    }
+
+    private void AddNumberingDefinitions(MainDocumentPart mainPart)
+    {
+        var numberingPart = mainPart.AddNewPart<NumberingDefinitionsPart>();
+        var numbering = new Numbering();
+
+        // Abstract numbering 0 — bullet list
+        var absBullet = new AbstractNum(
+            new Level(
+                new StartNumberingValue { Val = 1 },
+                new NumberingFormat { Val = NumberFormatValues.Bullet },
+                new LevelText { Val = "\u2022" },  // bullet character
+                new LevelJustification { Val = LevelJustificationValues.Left },
+                new ParagraphProperties(
+                    new Indentation { Left = "720", Hanging = "360" }
+                ),
+                new NumberingSymbolRunProperties(
+                    new RunFonts { Ascii = "Symbol", HighAnsi = "Symbol" }
+                )
+            ) { LevelIndex = 0 }
+        ) { AbstractNumberId = 0 };
+        numbering.AppendChild(absBullet);
+
+        // Abstract numbering 1 — decimal numbered list
+        var absNumber = new AbstractNum(
+            new Level(
+                new StartNumberingValue { Val = 1 },
+                new NumberingFormat { Val = NumberFormatValues.Decimal },
+                new LevelText { Val = "%1." },
+                new LevelJustification { Val = LevelJustificationValues.Left },
+                new ParagraphProperties(
+                    new Indentation { Left = "720", Hanging = "360" }
+                )
+            ) { LevelIndex = 0 }
+        ) { AbstractNumberId = 1 };
+        numbering.AppendChild(absNumber);
+
+        // Numbering instance 1 → bullets
+        numbering.AppendChild(new NumberingInstance(
+            new AbstractNumId { Val = 0 }
+        ) { NumberID = 1 });
+
+        // Numbering instance 2 → decimal
+        numbering.AppendChild(new NumberingInstance(
+            new AbstractNumId { Val = 1 }
+        ) { NumberID = 2 });
+
+        numberingPart.Numbering = numbering;
     }
 
     private void EmbedAnchors(MainDocumentPart mainPart, string anchorsJson)
@@ -769,21 +1161,20 @@ public class DocumentService
         var sectProps = new SectionProperties(
             new PageSize
             {
-                Width = 12240, // 8.5 inches (Letter)
+                Width = 12240,  // 8.5 inches (Letter)
                 Height = 15840, // 11 inches
                 Orient = PageOrientationValues.Portrait
             },
             new PageMargin
             {
-                Top = 1440,    // 1 inch
-                Right = 1440,
-                Bottom = 1440,
-                Left = 1440,
-                Header = 720,
-                Footer = 720,
+                Top = 1080,     // 0.75 inch — tighter for professional docs
+                Right = 1080,
+                Bottom = 1080,
+                Left = 1080,
+                Header = 540,
+                Footer = 540,
                 Gutter = 0
-            },
-            new Columns { Space = "720" }
+            }
         );
         body.AppendChild(sectProps);
     }
