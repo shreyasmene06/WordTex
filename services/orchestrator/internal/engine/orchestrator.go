@@ -254,10 +254,10 @@ func (o *Orchestrator) latexToWordPipeline(ctx context.Context, job *Job) error 
 	o.updateProgress(ctx, job, StateRendering, 70, "Generating .docx file")
 	start = time.Now()
 
-	// Stub: generate a minimal valid .docx containing the source text
-	docx, err := buildStubDocx(string(job.SourceData))
+	// Convert LaTeX source to a properly formatted .docx
+	docx, err := ConvertLatexToDocx(string(job.SourceData))
 	if err != nil {
-		return fmt.Errorf("stub docx generation failed: %w", err)
+		return fmt.Errorf("docx generation failed: %w", err)
 	}
 	baseName := strings.TrimSuffix(job.SourceFilename, ".tex")
 	job.OutputFilename = baseName + ".docx"
