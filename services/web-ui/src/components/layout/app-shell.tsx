@@ -7,6 +7,7 @@ import { Dashboard } from "@/components/dashboard/dashboard";
 import { UploadPanel } from "@/components/upload/upload-panel";
 import { SplitPaneEditor } from "@/components/editor/split-pane-editor";
 import { TemplateGallery } from "@/components/templates/template-gallery";
+import { JobPoller } from "@/components/job-poller";
 import { useUIStore } from "@/lib/stores";
 
 export function AppShell() {
@@ -34,6 +35,9 @@ export function AppShell() {
 
       {/* Global overlays */}
       <TemplateGallery />
+
+      {/* Poll all active jobs regardless of view */}
+      <JobPoller />
     </div>
   );
 }

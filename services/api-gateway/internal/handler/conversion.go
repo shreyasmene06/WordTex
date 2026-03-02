@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,26 @@ import (
 )
 
 const jobKeyPrefix = "wordtex:job:"
+
+// mapStateToStatus converts orchestrator-internal state names
+// (parsing, transforming, rendering, post_processing) into the
+// simplified statuses the frontend understands.
+func mapStateToStatus(state string) string {
+	switch state {
+	case "queued":
+		return "queued"
+	case "completed":
+		return "completed"
+	case "failed":
+		return "failed"
+	case "cancelled":
+		return "cancelled"
+	default:
+		// All intermediate states (parsing, transforming, rendering,
+		// post_processing, etc.) map to "processing".
+		return "processing"
+	}
+}
 
 // ConversionHandler manages document conversion endpoints.
 type ConversionHandler struct {
@@ -221,7 +242,7 @@ func (h *ConversionHandler) GetJobStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, JobStatusResponse{
 		JobID:          job.ID,
-		Status:         job.State,
+		Status:         mapStateToStatus(job.State),
 		Progress:       job.Progress,
 		CurrentStage:   job.CurrentStage,
 		Error:          job.Error,
@@ -288,7 +309,21 @@ func (h *ConversionHandler) DownloadResult(c *gin.Context) {
 	}
 
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(http.StatusOK, "application/octet-stream", job.OutputData)
+
+	// Determine MIME type from filename extension
+	contentType := "application/octet-stream"
+	switch {
+	case strings.HasSuffix(filename, ".docx"):
+		contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case strings.HasSuffix(filename, ".pdf"):
+		contentType = "application/pdf"
+	case strings.HasSuffix(filename, ".tex"):
+		contentType = "text/x-latex"
+	case strings.HasSuffix(filename, ".xml"):
+		contentType = "application/xml"
+	}
+
+	c.Data(http.StatusOK, contentType, job.OutputData)
 }
 
 // StreamProgress handles WebSocket at GET /api/v1/jobs/:id/progress

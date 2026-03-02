@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -238,31 +241,32 @@ func (o *Orchestrator) latexToWordPipeline(ctx context.Context, job *Job) error 
 	// Stage 1: Parse LaTeX → SIR
 	o.updateProgress(ctx, job, StateParsing, 10, "Parsing LaTeX source")
 	start := time.Now()
-
 	// TODO: Call SIR Core gRPC service
-	// response, err := o.sirClient.LatexToSir(ctx, &pb.LatexToSirRequest{...})
-
 	job.Metrics.ParseDurationMS = time.Since(start).Milliseconds()
 
 	// Stage 2: Transform SIR → OOXML
 	o.updateProgress(ctx, job, StateTransforming, 40, "Transforming to Word format")
 	start = time.Now()
-
 	// TODO: Call SIR Core for SIR → OOXML transformation
-
 	job.Metrics.TransformDurationMS = time.Since(start).Milliseconds()
 
 	// Stage 3: Render final .docx
 	o.updateProgress(ctx, job, StateRendering, 70, "Generating .docx file")
 	start = time.Now()
 
-	// TODO: Call OOXML Engine to assemble final .docx with templates
+	// Stub: generate a minimal valid .docx containing the source text
+	docx, err := buildStubDocx(string(job.SourceData))
+	if err != nil {
+		return fmt.Errorf("stub docx generation failed: %w", err)
+	}
+	baseName := strings.TrimSuffix(job.SourceFilename, ".tex")
+	job.OutputFilename = baseName + ".docx"
+	job.OutputData = docx
 
 	job.Metrics.RenderDurationMS = time.Since(start).Milliseconds()
 
 	// Stage 4: Post-processing
 	o.updateProgress(ctx, job, StatePostProcessing, 90, "Finalizing output")
-
 	// TODO: Run quality checks, inject anchor metadata
 
 	o.updateProgress(ctx, job, StateCompleted, 100, "Complete")
@@ -273,6 +277,15 @@ func (o *Orchestrator) wordToLatexPipeline(ctx context.Context, job *Job) error 
 	o.updateProgress(ctx, job, StateParsing, 10, "Parsing Word document")
 	o.updateProgress(ctx, job, StateTransforming, 40, "Extracting anchor metadata")
 	o.updateProgress(ctx, job, StateRendering, 70, "Generating LaTeX source")
+
+	// Stub: produce a minimal .tex wrapper around a placeholder
+	baseName := strings.TrimSuffix(job.SourceFilename, ".docx")
+	job.OutputFilename = baseName + ".tex"
+	job.OutputData = []byte(fmt.Sprintf(
+		"\\documentclass{article}\n\\begin{document}\n%% Converted from %s by WordTex (stub)\n\\section{Placeholder}\nReal conversion coming soon.\n\\end{document}\n",
+		job.SourceFilename,
+	))
+
 	o.updateProgress(ctx, job, StatePostProcessing, 90, "Validating output")
 	o.updateProgress(ctx, job, StateCompleted, 100, "Complete")
 	return nil
@@ -281,7 +294,12 @@ func (o *Orchestrator) wordToLatexPipeline(ctx context.Context, job *Job) error 
 func (o *Orchestrator) latexToPdfPipeline(ctx context.Context, job *Job) error {
 	o.updateProgress(ctx, job, StateParsing, 10, "Preparing LaTeX compilation")
 	o.updateProgress(ctx, job, StateRendering, 30, "Compiling with "+job.PDFEngine)
-	// Run xelatex/lualatex in sandbox
+
+	// Stub: produce a minimal valid PDF
+	baseName := strings.TrimSuffix(job.SourceFilename, ".tex")
+	job.OutputFilename = baseName + ".pdf"
+	job.OutputData = buildStubPdf(job.SourceFilename)
+
 	o.updateProgress(ctx, job, StatePostProcessing, 90, "Resolving cross-references")
 	o.updateProgress(ctx, job, StateCompleted, 100, "Complete")
 	return nil
@@ -290,7 +308,11 @@ func (o *Orchestrator) latexToPdfPipeline(ctx context.Context, job *Job) error {
 func (o *Orchestrator) wordToPdfPipeline(ctx context.Context, job *Job) error {
 	o.updateProgress(ctx, job, StateParsing, 10, "Loading Word document")
 	o.updateProgress(ctx, job, StateRendering, 40, "Rendering to PDF")
-	// Use Aspose.Words or headless Word COM interop
+
+	baseName := strings.TrimSuffix(job.SourceFilename, ".docx")
+	job.OutputFilename = baseName + ".pdf"
+	job.OutputData = buildStubPdf(job.SourceFilename)
+
 	o.updateProgress(ctx, job, StateCompleted, 100, "Complete")
 	return nil
 }
@@ -299,6 +321,11 @@ func (o *Orchestrator) roundTripPipeline(ctx context.Context, job *Job) error {
 	o.updateProgress(ctx, job, StateParsing, 10, "Parsing source document")
 	o.updateProgress(ctx, job, StateTransforming, 30, "Forward conversion")
 	o.updateProgress(ctx, job, StateRendering, 60, "Reverse conversion")
+
+	// Stub: echo back the source data as the round-trip result
+	job.OutputFilename = "roundtrip_" + job.SourceFilename
+	job.OutputData = job.SourceData
+
 	o.updateProgress(ctx, job, StatePostProcessing, 80, "Computing diff report")
 	o.updateProgress(ctx, job, StateCompleted, 100, "Complete")
 	return nil
@@ -344,4 +371,100 @@ func (o *Orchestrator) Shutdown() {
 	if o.conn != nil {
 		o.conn.Close()
 	}
+}
+
+// ── Stub output generators (replaced by real gRPC calls later) ──
+
+// buildStubDocx creates a minimal valid .docx (OOXML ZIP package) whose
+// single paragraph contains the provided text.  Every .docx reader on
+// the planet can open this.
+func buildStubDocx(body string) ([]byte, error) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	// [Content_Types].xml
+	ct := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`
+	addZipFile(zw, "[Content_Types].xml", ct)
+
+	// _rels/.rels
+	rels := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`
+	addZipFile(zw, "_rels/.rels", rels)
+
+	// word/_rels/document.xml.rels (empty but required)
+	docRels := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`
+	addZipFile(zw, "word/_rels/document.xml.rels", docRels)
+
+	// Build paragraphs from source text
+	var paras strings.Builder
+	for _, line := range strings.Split(body, "\n") {
+		escaped := escapeXML(line)
+		paras.WriteString(fmt.Sprintf("<w:p><w:r><w:t xml:space=\"preserve\">%s</w:t></w:r></w:p>\n", escaped))
+	}
+
+	doc := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Converted by WordTex</w:t></w:r></w:p>
+%s  </w:body>
+</w:document>`, paras.String())
+	addZipFile(zw, "word/document.xml", doc)
+
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func addZipFile(zw *zip.Writer, name, content string) {
+	w, _ := zw.Create(name)
+	w.Write([]byte(content))
+}
+
+func escapeXML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	return s
+}
+
+// buildStubPdf produces a minimal valid 1-page PDF with a note.
+func buildStubPdf(sourceFilename string) []byte {
+	// Minimal valid PDF with one page and text
+	text := fmt.Sprintf("WordTex stub output for: %s", sourceFilename)
+	stream := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (%s) Tj ET", text)
+	streamLen := len(stream)
+
+	var b strings.Builder
+	b.WriteString("%%PDF-1.4\n")
+	// Object 1: Catalog
+	b.WriteString("1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n")
+	// Object 2: Pages
+	b.WriteString("2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n")
+	// Object 3: Page
+	b.WriteString("3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n")
+	// Object 4: Content stream
+	b.WriteString(fmt.Sprintf("4 0 obj<</Length %d>>stream\n%s\nendstream\nendobj\n", streamLen, stream))
+	// Object 5: Font
+	b.WriteString("5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n")
+	// xref + trailer (simplified)
+	b.WriteString("xref\n0 6\n")
+	b.WriteString("0000000000 65535 f \n")
+	b.WriteString("0000000009 00000 n \n")
+	b.WriteString("0000000058 00000 n \n")
+	b.WriteString("0000000115 00000 n \n")
+	b.WriteString("0000000266 00000 n \n")
+	b.WriteString("0000000350 00000 n \n")
+	b.WriteString("trailer<</Size 6/Root 1 0 R>>\nstartxref\n0\n%%%%EOF\n")
+	return []byte(b.String())
 }

@@ -1,9 +1,7 @@
 "use client";
 
-import React, { useEffect, useRef, useCallback } from "react";
+import React from "react";
 import { useJobsStore } from "@/lib/stores";
-import { createProgressStream } from "@/lib/api";
-import { useJobStatus } from "@/lib/hooks";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { STAGE_LABELS } from "@/lib/types";
@@ -27,56 +25,9 @@ const STAGE_ICONS: Record<string, React.ReactNode> = {
 };
 
 export function ConversionTelemetry({ jobId }: { jobId: string }) {
-  const { handleProgressEvent, updateJob, jobs } = useJobsStore();
-  const wsRef = useRef<WebSocket | null>(null);
-  const job = jobs.find((j) => j.id === jobId);
-
-  // Fallback: HTTP polling if WebSocket is unavailable
-  const { data: polledStatus } = useJobStatus(jobId, true);
-
-  // Update job from polling whenever we get data
-  useEffect(() => {
-    if (polledStatus) {
-      updateJob(jobId, {
-        status: polledStatus.status,
-        progress: polledStatus.progress_percent,
-        currentStage: polledStatus.current_stage,
-        metrics: polledStatus.metrics ?? undefined,
-        error: polledStatus.error ?? undefined,
-        outputFilename: polledStatus.output_filename ?? undefined,
-        ...(polledStatus.status === "completed" ? { completedAt: new Date() } : {}),
-      });
-    }
-  }, [polledStatus, jobId, updateJob]);
-
-  // Attempt WebSocket connection for real-time updates
-  const connectWebSocket = useCallback(() => {
-    try {
-      const ws = createProgressStream(
-        jobId,
-        (event) => {
-          handleProgressEvent(event);
-        },
-        () => {
-          // On error, fall back to polling (already set up above)
-          console.warn("WebSocket error, falling back to polling");
-        },
-        () => {
-          wsRef.current = null;
-        }
-      );
-      wsRef.current = ws;
-    } catch {
-      // WebSocket not available, polling will handle it
-    }
-  }, [jobId, handleProgressEvent]);
-
-  useEffect(() => {
-    connectWebSocket();
-    return () => {
-      wsRef.current?.close();
-    };
-  }, [connectWebSocket]);
+  // Job status is kept up-to-date by the global <JobPoller /> in AppShell.
+  // This component only reads from the store and renders.
+  const job = useJobsStore((s) => s.jobs.find((j) => j.id === jobId));
 
   if (!job) return null;
 

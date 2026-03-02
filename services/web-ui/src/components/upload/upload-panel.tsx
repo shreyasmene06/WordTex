@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { useUploadStore, useJobsStore, useUIStore } from "@/lib/stores";
+import { useUploadStore, useJobsStore, useUIStore, useEditorStore } from "@/lib/stores";
 import { useSubmitConversion } from "@/lib/hooks";
 import { UploadZone } from "./upload-zone";
 import { ConversionOptions } from "./conversion-options";
@@ -24,6 +24,7 @@ export function UploadPanel() {
   } = useUploadStore();
   const { addJob, setActiveJob } = useJobsStore();
   const { setView } = useUIStore();
+  const { setSourceContent, setSourceLanguage, setPreviewUrl } = useEditorStore();
   const submitMutation = useSubmitConversion();
 
   const mainFile = files.find((f) => f.type === "main");
@@ -59,6 +60,23 @@ export function UploadPanel() {
       };
       addJob(job);
       setActiveJob(result.job_id);
+
+      // Load original file content into the source editor
+      try {
+        const text = await mainFile.file.text();
+        setSourceContent(text);
+        // Set the right language mode based on file/direction
+        const isLatex =
+          mainFile.name.endsWith(".tex") ||
+          mainFile.name.endsWith(".latex") ||
+          direction.startsWith("latex");
+        setSourceLanguage(isLatex ? "latex" : "xml");
+      } catch {
+        // Non-text files (e.g. .docx) can't be read as text
+      }
+
+      // Clear any stale preview from a previous job
+      setPreviewUrl(null);
 
       // Transition to editor view
       clearFiles();

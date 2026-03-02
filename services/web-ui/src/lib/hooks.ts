@@ -8,6 +8,7 @@ import {
   getTemplate,
   healthCheck,
 } from "./api";
+import { useJobsStore } from "./stores";
 import type { ConversionOptions } from "./types";
 
 // ─── Conversion Hooks ───────────────────────────────────────────
@@ -61,11 +62,16 @@ export function useDownloadResult() {
   return useMutation({
     mutationFn: (jobId: string) => downloadResult(jobId),
     onSuccess: (blob, jobId) => {
+      // Use the outputFilename from the job store if available
+      const { jobs } = useJobsStore.getState();
+      const job = jobs.find((j) => j.id === jobId);
+      const filename = job?.outputFilename ?? `wordtex-${jobId}.docx`;
+
       // Trigger browser download
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `wordtex-${jobId}.zip`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
