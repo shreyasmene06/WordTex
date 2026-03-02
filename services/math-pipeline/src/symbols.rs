@@ -1,0 +1,199 @@
+//! Symbol mapping tables for LaTeX ↔ Unicode conversions.
+
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+pub static LATEX_TO_UNICODE: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    let mut m = HashMap::new();
+
+    // Greek lowercase
+    m.insert("alpha", "α");
+    m.insert("beta", "β");
+    m.insert("gamma", "γ");
+    m.insert("delta", "δ");
+    m.insert("epsilon", "ε");
+    m.insert("varepsilon", "ɛ");
+    m.insert("zeta", "ζ");
+    m.insert("eta", "η");
+    m.insert("theta", "θ");
+    m.insert("vartheta", "ϑ");
+    m.insert("iota", "ι");
+    m.insert("kappa", "κ");
+    m.insert("lambda", "λ");
+    m.insert("mu", "μ");
+    m.insert("nu", "ν");
+    m.insert("xi", "ξ");
+    m.insert("pi", "π");
+    m.insert("varpi", "ϖ");
+    m.insert("rho", "ρ");
+    m.insert("varrho", "ϱ");
+    m.insert("sigma", "σ");
+    m.insert("varsigma", "ς");
+    m.insert("tau", "τ");
+    m.insert("upsilon", "υ");
+    m.insert("phi", "φ");
+    m.insert("varphi", "ϕ");
+    m.insert("chi", "χ");
+    m.insert("psi", "ψ");
+    m.insert("omega", "ω");
+
+    // Greek uppercase
+    m.insert("Gamma", "Γ");
+    m.insert("Delta", "Δ");
+    m.insert("Theta", "Θ");
+    m.insert("Lambda", "Λ");
+    m.insert("Xi", "Ξ");
+    m.insert("Pi", "Π");
+    m.insert("Sigma", "Σ");
+    m.insert("Upsilon", "Υ");
+    m.insert("Phi", "Φ");
+    m.insert("Psi", "Ψ");
+    m.insert("Omega", "Ω");
+
+    // Binary operators
+    m.insert("pm", "±");
+    m.insert("mp", "∓");
+    m.insert("times", "×");
+    m.insert("div", "÷");
+    m.insert("cdot", "·");
+    m.insert("star", "⋆");
+    m.insert("circ", "∘");
+    m.insert("bullet", "∙");
+    m.insert("oplus", "⊕");
+    m.insert("ominus", "⊖");
+    m.insert("otimes", "⊗");
+    m.insert("oslash", "⊘");
+    m.insert("odot", "⊙");
+    m.insert("dagger", "†");
+    m.insert("ddagger", "‡");
+    m.insert("cap", "∩");
+    m.insert("cup", "∪");
+    m.insert("sqcap", "⊓");
+    m.insert("sqcup", "⊔");
+    m.insert("vee", "∨");
+    m.insert("wedge", "∧");
+    m.insert("setminus", "∖");
+    m.insert("wr", "≀");
+    m.insert("diamond", "⋄");
+    m.insert("triangle", "△");
+    m.insert("triangleleft", "◁");
+    m.insert("triangleright", "▷");
+    m.insert("amalg", "⨿");
+
+    // Relations
+    m.insert("leq", "≤");
+    m.insert("le", "≤");
+    m.insert("geq", "≥");
+    m.insert("ge", "≥");
+    m.insert("neq", "≠");
+    m.insert("ne", "≠");
+    m.insert("equiv", "≡");
+    m.insert("sim", "∼");
+    m.insert("simeq", "≃");
+    m.insert("approx", "≈");
+    m.insert("cong", "≅");
+    m.insert("propto", "∝");
+    m.insert("prec", "≺");
+    m.insert("succ", "≻");
+    m.insert("preceq", "⪯");
+    m.insert("succeq", "⪰");
+    m.insert("ll", "≪");
+    m.insert("gg", "≫");
+    m.insert("subset", "⊂");
+    m.insert("supset", "⊃");
+    m.insert("subseteq", "⊆");
+    m.insert("supseteq", "⊇");
+    m.insert("sqsubseteq", "⊑");
+    m.insert("sqsupseteq", "⊒");
+    m.insert("in", "∈");
+    m.insert("ni", "∋");
+    m.insert("notin", "∉");
+    m.insert("vdash", "⊢");
+    m.insert("dashv", "⊣");
+    m.insert("models", "⊨");
+    m.insert("mid", "∣");
+    m.insert("parallel", "∥");
+    m.insert("perp", "⊥");
+    m.insert("asymp", "≍");
+    m.insert("bowtie", "⋈");
+
+    // Arrows
+    m.insert("leftarrow", "←");
+    m.insert("rightarrow", "→");
+    m.insert("to", "→");
+    m.insert("leftrightarrow", "↔");
+    m.insert("Leftarrow", "⇐");
+    m.insert("Rightarrow", "⇒");
+    m.insert("Leftrightarrow", "⇔");
+    m.insert("iff", "⟺");
+    m.insert("mapsto", "↦");
+    m.insert("hookrightarrow", "↪");
+    m.insert("hookleftarrow", "↩");
+    m.insert("uparrow", "↑");
+    m.insert("downarrow", "↓");
+    m.insert("updownarrow", "↕");
+    m.insert("Uparrow", "⇑");
+    m.insert("Downarrow", "⇓");
+    m.insert("Updownarrow", "⇕");
+    m.insert("nearrow", "↗");
+    m.insert("searrow", "↘");
+    m.insert("swarrow", "↙");
+    m.insert("nwarrow", "↖");
+    m.insert("rightharpoonup", "⇀");
+    m.insert("rightharpoondown", "⇁");
+    m.insert("leftharpoonup", "↼");
+    m.insert("leftharpoondown", "↽");
+    m.insert("rightleftharpoons", "⇌");
+    m.insert("longrightarrow", "⟶");
+    m.insert("longleftarrow", "⟵");
+    m.insert("longleftrightarrow", "⟷");
+    m.insert("Longrightarrow", "⟹");
+    m.insert("Longleftarrow", "⟸");
+    m.insert("Longleftrightarrow", "⟺");
+    m.insert("longmapsto", "⟼");
+    m.insert("xrightarrow", "⟶");
+    m.insert("xleftarrow", "⟵");
+
+    // Misc symbols
+    m.insert("infty", "∞");
+    m.insert("partial", "∂");
+    m.insert("nabla", "∇");
+    m.insert("forall", "∀");
+    m.insert("exists", "∃");
+    m.insert("nexists", "∄");
+    m.insert("neg", "¬");
+    m.insert("lnot", "¬");
+    m.insert("emptyset", "∅");
+    m.insert("varnothing", "∅");
+    m.insert("wp", "℘");
+    m.insert("complement", "∁");
+    m.insert("ell", "ℓ");
+    m.insert("hbar", "ℏ");
+    m.insert("Re", "ℜ");
+    m.insert("Im", "ℑ");
+    m.insert("aleph", "ℵ");
+    m.insert("beth", "ℶ");
+    m.insert("gimel", "ℷ");
+    m.insert("daleth", "ℸ");
+    m.insert("angle", "∠");
+    m.insert("triangle", "△");
+    m.insert("prime", "′");
+    m.insert("backprime", "‵");
+    m.insert("sharp", "♯");
+    m.insert("flat", "♭");
+    m.insert("natural", "♮");
+    m.insert("clubsuit", "♣");
+    m.insert("diamondsuit", "♢");
+    m.insert("heartsuit", "♡");
+    m.insert("spadesuit", "♠");
+    m.insert("checkmark", "✓");
+    m.insert("maltese", "✠");
+
+    // Dots
+    m.insert("cdots", "⋯");
+    m.insert("ldots", "…");
+    m.insert("vdots", "⋮");
+    m.insert("ddots", "⋱");
+
+    m
+});

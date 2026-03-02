@@ -1,0 +1,189 @@
+syntax = "proto3";
+
+package wordtex.v1;
+
+option go_package = "github.com/wordtex/wordtex/proto/gen/go/wordtex/v1";
+
+// ─── Conversion Service ─────────────────────────────────────────
+
+service ConversionService {
+  // Submit a new conversion job.
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+
+  // Get the status of a conversion job.
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+
+  // Stream real-time job progress updates.
+  rpc StreamJobProgress(StreamJobProgressRequest) returns (stream JobProgressEvent);
+
+  // Cancel a running job.
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+}
+
+// ─── SIR Transform Service (internal) ───────────────────────────
+
+service SirTransformService {
+  // Transform LaTeX source to SIR.
+  rpc LatexToSir(LatexToSirRequest) returns (SirResponse);
+
+  // Transform SIR to OOXML.
+  rpc SirToOoxml(SirToOoxmlRequest) returns (OoxmlResponse);
+
+  // Transform OOXML to SIR.
+  rpc OoxmlToSir(OoxmlToSirRequest) returns (SirResponse);
+
+  // Transform SIR to LaTeX.
+  rpc SirToLatex(SirToLatexRequest) returns (LatexResponse);
+
+  // Perform structural diff between two SIR documents.
+  rpc DiffSir(DiffSirRequest) returns (DiffSirResponse);
+}
+
+// ─── Messages ───────────────────────────────────────────────────
+
+enum ConversionDirection {
+  CONVERSION_DIRECTION_UNSPECIFIED = 0;
+  LATEX_TO_WORD = 1;
+  WORD_TO_LATEX = 2;
+  LATEX_TO_PDF = 3;
+  WORD_TO_PDF = 4;
+  ROUND_TRIP = 5;
+}
+
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  QUEUED = 1;
+  PROCESSING = 2;
+  COMPLETED = 3;
+  FAILED = 4;
+  CANCELLED = 5;
+}
+
+message SubmitJobRequest {
+  ConversionDirection direction = 1;
+  bytes source_file = 2;
+  string source_filename = 3;
+  ConversionOptions options = 4;
+  // Optional: additional files (images, .bib, .sty, etc.)
+  repeated AdditionalFile additional_files = 5;
+}
+
+message ConversionOptions {
+  // Whether to embed anchor metadata for round-trip support.
+  bool embed_anchors = 1;
+  // Whether to generate SVG fallbacks for unparseable constructs.
+  bool svg_fallbacks = 2;
+  // Template override (e.g., force "IEEEtran" style).
+  string template_override = 3;
+  // Whether to preserve raw LaTeX in comments.
+  bool preserve_raw_latex = 4;
+  // PDF engine preference (xelatex, lualatex, pdflatex).
+  string pdf_engine = 5;
+}
+
+message AdditionalFile {
+  string filename = 1;
+  bytes content = 2;
+}
+
+message SubmitJobResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+  int32 estimated_seconds = 3;
+}
+
+message GetJobStatusRequest {
+  string job_id = 1;
+}
+
+message GetJobStatusResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+  float progress_percent = 3;
+  string current_stage = 4;
+  string error_message = 5;
+  bytes output_file = 6;
+  string output_filename = 7;
+  ConversionMetrics metrics = 8;
+}
+
+message ConversionMetrics {
+  int64 parse_duration_ms = 1;
+  int64 transform_duration_ms = 2;
+  int64 render_duration_ms = 3;
+  int64 total_duration_ms = 4;
+  int32 blocks_processed = 5;
+  int32 equations_processed = 6;
+  int32 warnings_count = 7;
+  repeated string warnings = 8;
+}
+
+message StreamJobProgressRequest {
+  string job_id = 1;
+}
+
+message JobProgressEvent {
+  string job_id = 1;
+  JobStatus status = 2;
+  float progress_percent = 3;
+  string stage = 4;
+  string message = 5;
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+message CancelJobResponse {
+  bool success = 1;
+}
+
+// ─── Internal Transform Messages ────────────────────────────────
+
+message LatexToSirRequest {
+  string latex_source = 1;
+  ConversionOptions options = 2;
+}
+
+message SirToOoxmlRequest {
+  bytes sir_document = 1;  // JSON-encoded SirDocument
+  ConversionOptions options = 2;
+}
+
+message OoxmlToSirRequest {
+  bytes ooxml_data = 1;
+  ConversionOptions options = 2;
+}
+
+message SirToLatexRequest {
+  bytes sir_document = 1;  // JSON-encoded SirDocument
+  ConversionOptions options = 2;
+}
+
+message SirResponse {
+  bytes sir_document = 1;  // JSON-encoded SirDocument
+  repeated string warnings = 2;
+}
+
+message OoxmlResponse {
+  bytes docx_file = 1;
+  repeated string warnings = 2;
+}
+
+message LatexResponse {
+  string latex_source = 1;
+  repeated string warnings = 2;
+}
+
+message DiffSirRequest {
+  bytes original = 1;
+  bytes modified = 2;
+}
+
+message DiffSirResponse {
+  int32 added_count = 1;
+  int32 removed_count = 2;
+  int32 modified_count = 3;
+  int32 unchanged_count = 4;
+  bytes diff_report = 5;  // JSON-encoded DiffReport
+}

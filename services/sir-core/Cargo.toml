@@ -1,0 +1,46 @@
+[package]
+name = "sir-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["WordTex Team"]
+description = "Semantic Intermediate Representation core for bidirectional LaTeX ↔ OOXML transformation"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
+prost = "0.12"
+tonic = "0.11"
+lapin = "2"                  # RabbitMQ (AMQP) client
+futures-lite = "2"
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+quick-xml = { version = "0.31", features = ["serialize"] }
+roxmltree = "0.19"
+xmlwriter = "0.1"
+ordered-float = { version = "4", features = ["serde"] }
+indexmap = { version = "2", features = ["serde"] }
+smallvec = { version = "1", features = ["serde"] }
+bumpalo = { version = "3", features = ["collections"] }
+dashmap = "5"
+rayon = "1"
+bytes = "1"
+anyhow = "1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+pretty_assertions = "1"
+insta = { version = "1", features = ["json"] }
+tempfile = "3"
+tokio-test = "0.4"
+
+[[bench]]
+name = "sir_transform"
+harness = false

@@ -1,0 +1,49 @@
+{
+    "comment": "WordTex LaTeX Engine seccomp profile - blocks dangerous syscalls",
+    "defaultAction": "SCMP_ACT_ALLOW",
+    "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_AARCH64"],
+    "syscalls": [
+        {
+            "names": ["socket", "connect", "bind", "listen", "accept", "accept4", "sendto", "recvfrom", "sendmsg", "recvmsg"],
+            "action": "SCMP_ACT_ERRNO",
+            "errnoRet": 1,
+            "comment": "Block all network operations"
+        },
+        {
+            "names": ["ptrace"],
+            "action": "SCMP_ACT_ERRNO",
+            "errnoRet": 1,
+            "comment": "Block process tracing"
+        },
+        {
+            "names": ["mount", "umount2", "pivot_root", "chroot"],
+            "action": "SCMP_ACT_ERRNO",
+            "errnoRet": 1,
+            "comment": "Block filesystem mount operations"
+        },
+        {
+            "names": ["reboot", "kexec_load", "kexec_file_load"],
+            "action": "SCMP_ACT_ERRNO",
+            "errnoRet": 1,
+            "comment": "Block system-level operations"
+        },
+        {
+            "names": ["init_module", "finit_module", "delete_module"],
+            "action": "SCMP_ACT_ERRNO",
+            "errnoRet": 1,
+            "comment": "Block kernel module operations"
+        },
+        {
+            "names": ["ioperm", "iopl"],
+            "action": "SCMP_ACT_ERRNO",
+            "errnoRet": 1,
+            "comment": "Block direct hardware I/O"
+        },
+        {
+            "names": ["setuid", "setgid", "setgroups", "setreuid", "setregid", "setresuid", "setresgid"],
+            "action": "SCMP_ACT_ERRNO",
+            "errnoRet": 1,
+            "comment": "Block privilege escalation"
+        }
+    ]
+}

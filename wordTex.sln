@@ -1,0 +1,32 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "services", "services", "{5854FF58-B8C5-05C6-5BF2-ACE42193F22B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ooxml-engine", "ooxml-engine", "{E7941EE9-19B8-951E-D2F5-E21871D473F8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OoxmlEngine", "services\ooxml-engine\OoxmlEngine.csproj", "{85059FD7-4C26-9E3E-A75B-2E49075659DA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{85059FD7-4C26-9E3E-A75B-2E49075659DA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{85059FD7-4C26-9E3E-A75B-2E49075659DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{85059FD7-4C26-9E3E-A75B-2E49075659DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{85059FD7-4C26-9E3E-A75B-2E49075659DA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E7941EE9-19B8-951E-D2F5-E21871D473F8} = {5854FF58-B8C5-05C6-5BF2-ACE42193F22B}
+		{85059FD7-4C26-9E3E-A75B-2E49075659DA} = {E7941EE9-19B8-951E-D2F5-E21871D473F8}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {EC1B3A31-E301-4B87-BD93-5FFE6BFE8765}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,143 @@
+version: "3.9"
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: wordtex
+      RABBITMQ_DEFAULT_PASS: wordtex_dev
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Application Services ────────────────────────────────────────
+  api-gateway:
+    build:
+      context: .
+      dockerfile: docker/api-gateway.Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      ENVIRONMENT: development
+      JWT_SECRET: dev-secret-change-in-production
+      AMQP_URL: amqp://wordtex:wordtex_dev@rabbitmq:5672/
+      REDIS_URL: redis://redis:6379
+      RATE_LIMIT_RPS: "100"
+      MAX_UPLOAD_MB: "100"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/orchestrator.Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379
+      AMQP_URL: amqp://wordtex:wordtex_dev@rabbitmq:5672/
+      SIR_CORE_GRPC_ADDR: sir-core:50051
+      LATEX_ENGINE_ADDR: latex-engine:50052
+      OOXML_ENGINE_ADDR: ooxml-engine:50054
+      WORKER_CONCURRENCY: "4"
+      JOB_TIMEOUT_SECS: "300"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  sir-core:
+    build:
+      context: .
+      dockerfile: docker/sir-core.Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      HTTP_PORT: "8081"
+      GRPC_PORT: "50051"
+      REDIS_URL: redis://redis:6379
+      AMQP_URL: amqp://wordtex:wordtex_dev@rabbitmq:5672/
+      WORKER_CONCURRENCY: "4"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  latex-engine:
+    build:
+      context: .
+      dockerfile: docker/latex-engine.Dockerfile
+    ports:
+      - "50052:50052"
+    environment:
+      GRPC_PORT: "50052"
+      TEXLIVE_PATH: /usr/local/texlive
+      CACHE_DIR: /tmp/wordtex-latex-cache
+      SANDBOX_ENABLED: "true"
+      MAX_COMPILE_TIME_SECS: "120"
+      MAX_MEMORY_MB: "2048"
+    volumes:
+      - latex_cache:/tmp/wordtex-latex-cache
+
+  ooxml-engine:
+    build:
+      context: .
+      dockerfile: docker/ooxml-engine.Dockerfile
+    ports:
+      - "50054:8080"
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+
+  math-pipeline:
+    build:
+      context: .
+      dockerfile: docker/math-pipeline.Dockerfile
+    ports:
+      - "50053:50053"
+    environment:
+      GRPC_PORT: "50053"
+
+  # ── Frontend ─────────────────────────────────────────────────────
+  web-ui:
+    build:
+      context: ./services/web-ui
+      dockerfile: ../../docker/web-ui.Dockerfile
+      network: host
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://api-gateway:8080
+      NEXT_PUBLIC_WS_URL: ws://api-gateway:8080
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: dev-secret-change-in-production
+    depends_on:
+      - api-gateway
+
+volumes:
+  rabbitmq_data:
+  redis_data:
+  latex_cache:

@@ -1,0 +1,300 @@
+syntax = "proto3";
+package wordtex.sir.v1;
+
+option go_package = "github.com/wordtex/wordtex/proto/gen/go/sir/v1";
+
+// ─── Core SIR Types ──────────────────────────────────────────────
+
+message SirDocument {
+    Metadata metadata = 1;
+    repeated Block body = 2;
+    AnchorStore anchor_store = 3;
+    string template_name = 4;
+}
+
+message Metadata {
+    string title = 1;
+    repeated Author authors = 2;
+    string abstract_text = 3;
+    repeated string keywords = 4;
+    string date = 5;
+    map<string, string> custom_fields = 6;
+}
+
+message Author {
+    string name = 1;
+    repeated string affiliations = 2;
+    string email = 3;
+    string orcid = 4;
+}
+
+// ─── Block Types ─────────────────────────────────────────────────
+
+message Block {
+    oneof block {
+        Heading heading = 1;
+        Paragraph paragraph = 2;
+        MathBlock math_block = 3;
+        TableBlock table_block = 4;
+        Figure figure = 5;
+        ListBlock list_block = 6;
+        CodeBlock code_block = 7;
+        TheoremLike theorem_like = 8;
+        BlockQuote block_quote = 9;
+        HorizontalRule horizontal_rule = 10;
+        PageBreak page_break = 11;
+        RawBlock raw_block = 12;
+    }
+    string anchor_id = 100;
+}
+
+message Heading {
+    uint32 level = 1; // 1-6
+    repeated Inline content = 2;
+    string label = 3;
+    bool numbered = 4;
+}
+
+message Paragraph {
+    repeated Inline content = 1;
+    ParagraphStyle style = 2;
+}
+
+message MathBlock {
+    string latex_source = 1;
+    string mathml = 2;
+    string omml = 3;
+    string label = 4;
+    bool numbered = 5;
+    MathEnvironment environment = 6;
+}
+
+enum MathEnvironment {
+    MATH_ENVIRONMENT_UNSPECIFIED = 0;
+    EQUATION = 1;
+    ALIGN = 2;
+    GATHER = 3;
+    MULTLINE = 4;
+    CASES = 5;
+    MATRIX = 6;
+    ARRAY = 7;
+}
+
+message TableBlock {
+    repeated TableRow rows = 1;
+    string caption = 2;
+    string label = 3;
+    TableStyle style = 4;
+}
+
+message TableRow {
+    repeated TableCell cells = 1;
+    bool is_header = 2;
+}
+
+message TableCell {
+    repeated Inline content = 1;
+    uint32 col_span = 2;
+    uint32 row_span = 3;
+    Alignment alignment = 4;
+}
+
+message Figure {
+    bytes image_data = 1;
+    string image_format = 2; // "png", "pdf", "svg", "eps"
+    string caption = 3;
+    string label = 4;
+    double width_fraction = 5; // 0.0-1.0 of text width
+    string alt_text = 6;
+}
+
+message ListBlock {
+    bool ordered = 1;
+    repeated ListItem items = 2;
+    uint32 start_number = 3;
+}
+
+message ListItem {
+    repeated Inline content = 1;
+    repeated ListBlock sublists = 2;
+}
+
+message CodeBlock {
+    string source = 1;
+    string language = 2;
+    string caption = 3;
+    string label = 4;
+    bool line_numbers = 5;
+}
+
+message TheoremLike {
+    string kind = 1; // "Theorem", "Lemma", "Definition", "Proof", etc.
+    string title = 2;
+    repeated Block content = 3;
+    string label = 4;
+    uint32 number = 5;
+}
+
+message BlockQuote {
+    repeated Block content = 1;
+    string attribution = 2;
+}
+
+message HorizontalRule {}
+
+message PageBreak {}
+
+message RawBlock {
+    string format = 1; // "latex", "ooxml", "html"
+    string content = 2;
+}
+
+// ─── Inline Types ────────────────────────────────────────────────
+
+message Inline {
+    oneof inline {
+        Text text = 1;
+        InlineMath inline_math = 2;
+        Reference reference = 3;
+        Citation citation = 4;
+        Hyperlink hyperlink = 5;
+        FootnoteRef footnote_ref = 6;
+        InlineCode inline_code = 7;
+        LineBreak line_break = 8;
+        RawInline raw_inline = 9;
+        Image image = 10;
+    }
+}
+
+message Text {
+    string content = 1;
+    TextStyle style = 2;
+}
+
+message InlineMath {
+    string latex = 1;
+    string mathml = 2;
+    string omml = 3;
+}
+
+message Reference {
+    string target_label = 1;
+    string display_text = 2;
+    ReferenceKind kind = 3;
+}
+
+enum ReferenceKind {
+    REFERENCE_KIND_UNSPECIFIED = 0;
+    REF = 1;
+    EQREF = 2;
+    PAGEREF = 3;
+    NAMEREF = 4;
+    AUTOREF = 5;
+    CREF = 6;
+}
+
+message Citation {
+    repeated string keys = 1;
+    string prenote = 2;
+    string postnote = 3;
+    CitationStyle style = 4;
+}
+
+enum CitationStyle {
+    CITATION_STYLE_UNSPECIFIED = 0;
+    NUMERIC = 1;
+    AUTHOR_YEAR = 2;
+    AUTHOR_ONLY = 3;
+    YEAR_ONLY = 4;
+    FULL = 5;
+}
+
+message Hyperlink {
+    string url = 1;
+    string title = 2;
+    repeated Inline content = 3;
+}
+
+message FootnoteRef {
+    uint32 number = 1;
+    repeated Block content = 2;
+}
+
+message InlineCode {
+    string code = 1;
+}
+
+message LineBreak {}
+
+message RawInline {
+    string format = 1;
+    string content = 2;
+}
+
+message Image {
+    string src = 1;
+    string alt = 2;
+    string title = 3;
+}
+
+// ─── Style Types ─────────────────────────────────────────────────
+
+message TextStyle {
+    bool bold = 1;
+    bool italic = 2;
+    bool underline = 3;
+    bool strikethrough = 4;
+    bool superscript = 5;
+    bool subscript = 6;
+    bool small_caps = 7;
+    string font_family = 8;
+    double font_size_pt = 9;
+    Color color = 10;
+    Color background_color = 11;
+}
+
+message ParagraphStyle {
+    Alignment alignment = 1;
+    double line_spacing_pt = 2;
+    double space_before_pt = 3;
+    double space_after_pt = 4;
+    double indent_first_line_mm = 5;
+    double indent_left_mm = 6;
+    double indent_right_mm = 7;
+}
+
+message TableStyle {
+    bool booktabs = 1;
+    Alignment default_alignment = 2;
+    string caption_position = 3; // "above" or "below"
+}
+
+message Color {
+    uint32 r = 1;
+    uint32 g = 2;
+    uint32 b = 3;
+    double alpha = 4;
+    string hex = 5;
+}
+
+enum Alignment {
+    ALIGNMENT_UNSPECIFIED = 0;
+    LEFT = 1;
+    CENTER = 2;
+    RIGHT = 3;
+    JUSTIFY = 4;
+}
+
+// ─── Anchor Store ────────────────────────────────────────────────
+
+message AnchorStore {
+    map<string, Anchor> anchors = 1;
+}
+
+message Anchor {
+    string id = 1;
+    string label = 2;
+    string kind = 3; // "section", "equation", "figure", "table", "theorem"
+    string resolved_text = 4; // e.g., "3.1", "Figure 2", "Theorem 4"
+    uint32 page_number = 5;
+}

@@ -1,0 +1,193 @@
+syntax = "proto3";
+package wordtex.service.v1;
+
+option go_package = "github.com/wordtex/wordtex/proto/gen/go/service/v1";
+
+import "sir/v1/sir.proto";
+
+// ─── Internal Service Definitions ────────────────────────────────
+// These are internal gRPC services called by the orchestrator.
+// The public API is defined in wordtex/v1/conversion.proto.
+
+// ─── Math Pipeline Service ───────────────────────────────────────
+
+service MathPipelineService {
+    // Convert LaTeX math to MathML
+    rpc LatexToMathML(MathConvertRequest) returns (MathConvertResponse);
+
+    // Convert MathML to OMML (Office Math Markup Language)
+    rpc MathMLToOMML(MathConvertRequest) returns (MathConvertResponse);
+
+    // Convert OMML to MathML
+    rpc OMMLToMathML(MathConvertRequest) returns (MathConvertResponse);
+
+    // Convert MathML back to LaTeX
+    rpc MathMLToLatex(MathConvertRequest) returns (MathConvertResponse);
+
+    // Full pipeline: LaTeX → MathML → OMML (or reverse)
+    rpc ConvertMath(FullMathConvertRequest) returns (FullMathConvertResponse);
+
+    // Validate round-trip fidelity
+    rpc ValidateRoundTrip(RoundTripRequest) returns (RoundTripResponse);
+}
+
+// ─── LaTeX Engine Service ────────────────────────────────────────
+
+service LatexEngineService {
+    // Compile LaTeX source to PDF
+    rpc CompileLatex(CompileRequest) returns (CompileResponse);
+
+    // Parse LaTeX source into AST (for SIR transformation)
+    rpc ParseLatex(ParseLatexRequest) returns (ParseLatexResponse);
+
+    // Expand macros in LaTeX source
+    rpc ExpandMacros(ExpandMacrosRequest) returns (ExpandMacrosResponse);
+
+    // Health check
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ─── OOXML Engine Service ────────────────────────────────────────
+
+service OoxmlEngineService {
+    // Build a .docx from a SIR document
+    rpc SirToDocx(SirToDocxRequest) returns (DocxResponse);
+
+    // Parse a .docx into a SIR document
+    rpc DocxToSir(DocxToSirRequest) returns (SirResponse);
+
+    // Extract embedded anchor metadata from a .docx
+    rpc ExtractAnchors(ExtractAnchorsRequest) returns (ExtractAnchorsResponse);
+}
+
+// ─── Math Pipeline Messages ──────────────────────────────────────
+
+message MathConvertRequest {
+    string input = 1;
+    string input_format = 2; // "latex", "mathml", "omml"
+}
+
+message MathConvertResponse {
+    string output = 1;
+    string output_format = 2;
+    repeated string warnings = 3;
+}
+
+message FullMathConvertRequest {
+    string input = 1;
+    MathDirection direction = 2;
+}
+
+enum MathDirection {
+    MATH_DIRECTION_UNSPECIFIED = 0;
+    LATEX_TO_OMML = 1;     // LaTeX → MathML → OMML
+    OMML_TO_LATEX = 2;     // OMML → MathML → LaTeX
+    LATEX_TO_MATHML = 3;   // LaTeX → MathML only
+    MATHML_TO_LATEX = 4;   // MathML → LaTeX only
+}
+
+message FullMathConvertResponse {
+    string latex = 1;
+    string mathml = 2;
+    string omml = 3;
+    repeated string warnings = 4;
+}
+
+message RoundTripRequest {
+    string original_latex = 1;
+}
+
+message RoundTripResponse {
+    bool is_equivalent = 1;
+    string original_latex = 2;
+    string roundtrip_latex = 3;
+    string intermediate_mathml = 4;
+    string intermediate_omml = 5;
+    double similarity_score = 6; // 0.0-1.0
+    repeated string differences = 7;
+}
+
+// ─── LaTeX Engine Messages ───────────────────────────────────────
+
+message CompileRequest {
+    string latex_source = 1;
+    repeated FileAttachment additional_files = 2;
+    string engine = 3;  // "xelatex", "lualatex", "pdflatex"
+    uint32 max_runs = 4; // max latexmk passes (default: 5)
+}
+
+message CompileResponse {
+    bytes pdf_data = 1;
+    string compilation_log = 2;
+    repeated string warnings = 3;
+    uint32 pages = 4;
+    uint64 compile_time_ms = 5;
+    bool from_cache = 6;
+}
+
+message ParseLatexRequest {
+    string latex_source = 1;
+}
+
+message ParseLatexResponse {
+    bytes ast_json = 1; // JSON-encoded LaTeX AST
+    repeated string warnings = 2;
+}
+
+message ExpandMacrosRequest {
+    string latex_source = 1;
+    map<string, string> macro_definitions = 2;
+}
+
+message ExpandMacrosResponse {
+    string expanded_source = 1;
+    repeated string warnings = 2;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+    bool healthy = 1;
+    string version = 2;
+    map<string, string> engine_versions = 3; // e.g., {"xelatex": "3.14159"}
+}
+
+// ─── OOXML Engine Messages ───────────────────────────────────────
+
+message SirToDocxRequest {
+    wordtex.sir.v1.SirDocument document = 1;
+    string template_name = 2;
+    bool embed_anchors = 3;
+}
+
+message DocxResponse {
+    bytes docx_data = 1;
+    repeated string warnings = 2;
+    uint32 pages_estimated = 3;
+}
+
+message DocxToSirRequest {
+    bytes docx_data = 1;
+}
+
+message SirResponse {
+    wordtex.sir.v1.SirDocument document = 1;
+    repeated string warnings = 2;
+}
+
+message ExtractAnchorsRequest {
+    bytes docx_data = 1;
+}
+
+message ExtractAnchorsResponse {
+    wordtex.sir.v1.AnchorStore anchors = 1;
+    bool has_anchor_data = 2;
+}
+
+// ─── Common Types ────────────────────────────────────────────────
+
+message FileAttachment {
+    string filename = 1;
+    bytes data = 2;
+    string mime_type = 3;
+}

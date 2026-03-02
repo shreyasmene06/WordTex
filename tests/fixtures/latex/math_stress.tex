@@ -1,0 +1,91 @@
+% Test fixture: heavy math paper
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathrsfs}
+\usepackage{bm}
+
+\begin{document}
+
+\title{Stress Test: Complex Mathematical Typesetting}
+\author{Test Author}
+\maketitle
+
+\section{Operator Stacking}
+
+\begin{equation}
+    \sum_{\substack{i=1 \\ i \neq j}}^{n} \prod_{k=1}^{m}
+    \frac{\partial^2 f}{\partial x_i \partial x_k} \cdot
+    \oint_{\gamma} \mathscr{F}(\zeta) \, d\zeta
+\end{equation}
+
+\section{Nested Fractions}
+
+\begin{equation}
+    \cfrac{1}{1 + \cfrac{1}{1 + \cfrac{1}{1 + \cfrac{1}{x}}}}
+\end{equation}
+
+\section{Matrix Operations}
+
+\begin{equation}
+    \det \begin{vmatrix}
+        a_{11} & a_{12} & a_{13} \\
+        a_{21} & a_{22} & a_{23} \\
+        a_{31} & a_{32} & a_{33}
+    \end{vmatrix} =
+    \sum_{\sigma \in S_3} \text{sgn}(\sigma)
+    \prod_{i=1}^{3} a_{i,\sigma(i)}
+\end{equation}
+
+\section{Commutative Diagrams (as aligned)}
+
+\begin{equation}
+    \begin{aligned}
+        A &\xrightarrow{f} B \\
+        {\scriptstyle g}\downarrow &\quad \downarrow{\scriptstyle h} \\
+        C &\xrightarrow{k} D
+    \end{aligned}
+\end{equation}
+
+\section{Multi-line Derivations}
+
+\begin{align}
+    \nabla \times (\nabla \times \mathbf{E})
+        &= \nabla(\nabla \cdot \mathbf{E}) - \nabla^2 \mathbf{E} \\
+        &= -\frac{\partial}{\partial t}(\nabla \times \mathbf{B}) \\
+        &= -\mu_0 \epsilon_0 \frac{\partial^2 \mathbf{E}}{\partial t^2} \\
+    \Rightarrow \quad \nabla^2 \mathbf{E}
+        &= \mu_0 \epsilon_0 \frac{\partial^2 \mathbf{E}}{\partial t^2}
+\end{align}
+
+\section{Accents and Decorations}
+
+\begin{equation}
+    \hat{x}, \bar{x}, \vec{x}, \dot{x}, \ddot{x},
+    \tilde{x}, \widehat{xyz}, \widetilde{abc},
+    \overbrace{a+b+c}^{\text{sum}},
+    \underbrace{x \cdot y \cdot z}_{\text{product}}
+\end{equation}
+
+\section{Blackboard Bold and Script}
+
+\begin{equation}
+    \mathbb{R}^n, \quad \mathbb{C}^{m \times n}, \quad
+    \mathbb{Z}_p, \quad \mathbb{Q}(\sqrt{2}), \quad
+    \mathscr{L}(V, W), \quad \mathcal{O}(n \log n), \quad
+    \mathfrak{g} = \mathfrak{sl}(2, \mathbb{C})
+\end{equation}
+
+\section{Cases and Piecewise}
+
+\begin{equation}
+    |x| = \begin{cases}
+        x & \text{if } x \geq 0 \\
+        -x & \text{if } x < 0
+    \end{cases}
+\end{equation}
+
+\begin{equation}
+    \binom{n}{k} = \frac{n!}{k!(n-k)!} \quad \text{for } 0 \leq k \leq n
+\end{equation}
+
+\end{document}

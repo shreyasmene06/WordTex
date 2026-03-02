@@ -1,0 +1,55 @@
+name: Visual Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/sir-core/**'
+      - 'services/math-pipeline/**'
+      - 'services/ooxml-engine/**'
+      - 'tests/**'
+
+jobs:
+  visual-diff:
+    name: Visual Diff Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install TeX Live
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y texlive-full latexmk poppler-utils imagemagick
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/sir-core
+
+      - name: Build SIR Core
+        working-directory: services/sir-core
+        run: cargo build --release
+
+      - name: Run Visual Regression Suite
+        run: |
+          mkdir -p tests/output
+          for tex_file in tests/fixtures/latex/*.tex; do
+            basename=$(basename "$tex_file" .tex)
+            echo "Testing: $basename"
+
+            # Compile original LaTeX to PDF
+            latexmk -pdf -interaction=nonstopmode -output-directory=tests/output "$tex_file" 2>/dev/null || true
+
+            # Convert PDF pages to images for comparison
+            if [ -f "tests/output/${basename}.pdf" ]; then
+              pdftoppm -png -r 300 "tests/output/${basename}.pdf" "tests/output/${basename}_original"
+            fi
+          done
+
+      - name: Upload Visual Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-results
+          path: tests/output/
+          retention-days: 7
