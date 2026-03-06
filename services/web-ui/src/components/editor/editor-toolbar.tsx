@@ -19,11 +19,12 @@ import {
   Download,
   RotateCcw,
 } from "lucide-react";
-import { useDownloadResult } from "@/lib/hooks";
+import { useDownloadResult, useSubmitConversion, useDownloadDocx } from "@/lib/hooks";
 import { STAGE_LABELS } from "@/lib/types";
 
 export function EditorToolbar() {
   const {
+    sourceContent,
     isEditorVisible,
     isPreviewVisible,
     editorFontSize,
@@ -37,6 +38,8 @@ export function EditorToolbar() {
   const { jobs, activeJobId } = useJobsStore();
   const activeJob = jobs.find((j) => j.id === activeJobId);
   const downloadMutation = useDownloadResult();
+  const submitMutation = useSubmitConversion();
+  const docxMutation = useDownloadDocx();
 
   return (
     <div className="flex h-10 items-center justify-between border-b border-border bg-card/50 px-2">
@@ -161,7 +164,29 @@ export function EditorToolbar() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
-        {activeJob?.status === "completed" && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              disabled={!sourceContent || docxMutation.isPending}
+              onClick={() => {
+                if (!sourceContent) return;
+                docxMutation.mutate({
+                  source: sourceContent,
+                  filename: "document.tex",
+                });
+              }}
+            >
+              <Download className="h-3 w-3" />
+              {docxMutation.isPending ? "Converting…" : "Download .docx"}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Convert to Word and download</TooltipContent>
+        </Tooltip>
+
+        {activeJob?.status === "completed" && activeJob.outputFilename?.endsWith(".pdf") && (
           <Button
             variant="outline"
             size="sm"
@@ -170,13 +195,26 @@ export function EditorToolbar() {
             disabled={downloadMutation.isPending}
           >
             <Download className="h-3 w-3" />
-            Download
+            {downloadMutation.isPending ? "…" : "Download .pdf"}
           </Button>
         )}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-7 w-7">
-              <RotateCcw className="h-3.5 w-3.5" />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              disabled={submitMutation.isPending}
+              onClick={() => {
+                if (!sourceContent) return;
+                const file = new File([sourceContent], "document.tex", { type: "text/plain" });
+                submitMutation.mutate({
+                  file,
+                  options: { direction: "latex_to_pdf" },
+                });
+              }}
+            >
+              <RotateCcw className={`h-3.5 w-3.5 ${submitMutation.isPending ? "animate-spin" : ""}`} />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Re-run conversion</TooltipContent>

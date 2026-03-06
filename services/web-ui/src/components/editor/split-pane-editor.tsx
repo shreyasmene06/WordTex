@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import {
   PanelGroup,
   Panel,
@@ -10,10 +10,32 @@ import { SourceEditor } from "./source-editor";
 import { PreviewPane } from "./preview-pane";
 import { EditorToolbar } from "./editor-toolbar";
 import { useEditorStore } from "@/lib/stores";
+import { useSubmitConversion } from "@/lib/hooks";
 import { GripVertical } from "lucide-react";
 
 export function SplitPaneEditor() {
-  const { isEditorVisible, isPreviewVisible } = useEditorStore();
+  const { isEditorVisible, isPreviewVisible, sourceContent } = useEditorStore();
+  const submitMutation = useSubmitConversion();
+  const lastCompiledContent = useRef<string | null>(null);
+  const mutateRef = useRef(submitMutation.mutate);
+  mutateRef.current = submitMutation.mutate;
+
+  // Auto-compile on debounce (Overleaf-style live preview)
+  useEffect(() => {
+    if (!sourceContent) return;
+    if (sourceContent === lastCompiledContent.current) return;
+
+    const timeoutId = setTimeout(() => {
+      lastCompiledContent.current = sourceContent;
+      const file = new File([sourceContent], "document.tex", { type: "text/plain" });
+      mutateRef.current({
+        file,
+        options: { direction: "latex_to_pdf" },
+      });
+    }, 2500);
+
+    return () => clearTimeout(timeoutId);
+  }, [sourceContent]);
 
   return (
     <div className="flex h-full flex-col">

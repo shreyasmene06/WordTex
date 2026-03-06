@@ -52,11 +52,11 @@ export function JobPoller() {
               const filename = res.output_filename ?? "";
 
               if (filename.endsWith(".pdf")) {
+                // PDF — embed directly in the preview iframe
                 useEditorStore.getState().setPreviewUrl(url);
               } else {
-                // For .docx and other non-embeddable formats, store the
-                // blob URL so the preview pane can offer a download link.
-                useEditorStore.getState().setPreviewUrl(url);
+                // .docx / other — store as a download link, don't preview
+                useEditorStore.getState().setDownloadUrl(url);
               }
             } catch {
               // Download failed — preview stays empty

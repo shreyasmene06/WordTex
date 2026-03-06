@@ -5,7 +5,14 @@ RUN go mod download 2>/dev/null || true
 COPY services/orchestrator/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /orchestrator ./cmd/server
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-full \
+      latexmk \
+      pandoc \
+      libreoffice-writer \
+      ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=builder /orchestrator /usr/local/bin/orchestrator
-USER nonroot:nonroot
+USER nobody:nogroup
 ENTRYPOINT ["orchestrator"]

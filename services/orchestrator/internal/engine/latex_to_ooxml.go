@@ -46,6 +46,7 @@ type fmtRun struct {
 	SmallCaps bool
 	FontSize  int // in half-points (0 = default)
 	Underline bool
+	IsMath    bool // inline math — render as OMML
 }
 
 type descItem struct {
@@ -1079,7 +1080,7 @@ func parseInlineFormatting(text string) []fmtRun {
 		case "mono":
 			runs = append(runs, fmtRun{Text: cleanPlain(bestContent), Mono: true})
 		case "math":
-			runs = append(runs, fmtRun{Text: bestContent, Mono: true})
+			runs = append(runs, fmtRun{Text: bestContent, Mono: true, IsMath: true})
 		}
 
 		remaining = remaining[bestIdx+bestLen:]
@@ -1140,6 +1141,7 @@ func buildFormattedDocx(doc parsedDoc) ([]byte, error) {
 	addZipFileB(zw, "word/_rels/document.xml.rels", wordRelsXML)
 	addZipFileB(zw, "word/styles.xml", stylesXML)
 	addZipFileB(zw, "word/numbering.xml", numberingXML)
+	addZipFileB(zw, "word/settings.xml", settingsXML)
 
 	documentXML := buildDocumentXML(doc)
 	addZipFileB(zw, "word/document.xml", documentXML)
@@ -1160,7 +1162,8 @@ func buildDocumentXML(doc parsedDoc) string {
 
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
   <w:body>
 `)
 
@@ -1234,9 +1237,14 @@ func renderElements(b *strings.Builder, elems []bodyElem, alignment string) {
 			b.WriteString(styledPara("Normal", itRuns))
 
 		case kindMathBlock:
-			content := strings.Join(elem.Lines, "\n")
-			content = cleanPlain(content)
-			b.WriteString(styledPara("MathBlock", []fmtRun{{Text: content, Mono: true}}))
+			content := strings.Join(elem.Lines, " ")
+			content = strings.TrimSpace(content)
+			// Remove \label{...} and alignment characters
+			content = reLabel.ReplaceAllString(content, "")
+			content = strings.ReplaceAll(content, "\\nonumber", "")
+			content = strings.ReplaceAll(content, "\\notag", "")
+			// Generate OMML math
+			b.WriteString(buildOmmlMathParagraph(content))
 
 		case kindVerbatim:
 			for _, ln := range elem.Lines {
@@ -1404,6 +1412,12 @@ func spacingPara(height string) string {
 
 func writeRuns(b *strings.Builder, runs []fmtRun) {
 	for _, r := range runs {
+		// Inline math → emit OMML inline
+		if r.IsMath {
+			b.WriteString(buildOmmlInlineMath(r.Text))
+			continue
+		}
+
 		b.WriteString("      <w:r>")
 		var rpr []string
 		if r.Bold {
@@ -1480,6 +1494,534 @@ func buildOOXMLTable(rows []string) string {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// OMML Math generation (LaTeX → Office Math XML)
+// ═══════════════════════════════════════════════════════════════
+
+// Greek letters and common LaTeX symbols → Unicode
+var latexToUnicode = map[string]string{
+	`\alpha`: "\u03B1", `\beta`: "\u03B2", `\gamma`: "\u03B3", `\delta`: "\u03B4",
+	`\epsilon`: "\u03F5", `\varepsilon`: "\u03B5", `\zeta`: "\u03B6", `\eta`: "\u03B7",
+	`\theta`: "\u03B8", `\vartheta`: "\u03D1", `\iota`: "\u03B9", `\kappa`: "\u03BA",
+	`\lambda`: "\u03BB", `\mu`: "\u03BC", `\nu`: "\u03BD", `\xi`: "\u03BE",
+	`\pi`: "\u03C0", `\varpi`: "\u03D6", `\rho`: "\u03C1", `\varrho`: "\u03F1",
+	`\sigma`: "\u03C3", `\varsigma`: "\u03C2", `\tau`: "\u03C4", `\upsilon`: "\u03C5",
+	`\phi`: "\u03D5", `\varphi`: "\u03C6", `\chi`: "\u03C7", `\psi`: "\u03C8",
+	`\omega`: "\u03C9",
+	`\Gamma`: "\u0393", `\Delta`: "\u0394", `\Theta`: "\u0398", `\Lambda`: "\u039B",
+	`\Xi`: "\u039E", `\Pi`: "\u03A0", `\Sigma`: "\u03A3", `\Upsilon`: "\u03A5",
+	`\Phi`: "\u03A6", `\Psi`: "\u03A8", `\Omega`: "\u03A9",
+	`\infty`: "\u221E", `\nabla`: "\u2207", `\partial`: "\u2202",
+	`\forall`: "\u2200", `\exists`: "\u2203", `\nexists`: "\u2204",
+	`\emptyset`: "\u2205", `\varnothing`: "\u2205",
+	`\in`: "\u2208", `\notin`: "\u2209", `\ni`: "\u220B",
+	`\subset`: "\u2282", `\supset`: "\u2283", `\subseteq`: "\u2286", `\supseteq`: "\u2287",
+	`\cup`: "\u222A", `\cap`: "\u2229",
+	`\pm`: "\u00B1", `\mp`: "\u2213", `\times`: "\u00D7", `\div`: "\u00F7",
+	`\cdot`: "\u22C5", `\circ`: "\u2218", `\bullet`: "\u2022",
+	`\leq`: "\u2264", `\geq`: "\u2265", `\neq`: "\u2260", `\approx`: "\u2248",
+	`\equiv`: "\u2261", `\sim`: "\u223C", `\simeq`: "\u2243", `\cong`: "\u2245",
+	`\propto`: "\u221D", `\ll`: "\u226A", `\gg`: "\u226B",
+	`\to`: "\u2192", `\rightarrow`: "\u2192", `\leftarrow`: "\u2190",
+	`\Rightarrow`: "\u21D2", `\Leftarrow`: "\u21D0", `\Leftrightarrow`: "\u21D4",
+	`\mapsto`: "\u21A6",
+	`\langle`: "\u27E8", `\rangle`: "\u27E9",
+	`\ldots`: "\u2026", `\cdots`: "\u22EF", `\vdots`: "\u22EE", `\ddots`: "\u22F1",
+	`\quad`: "\u2003", `\qquad`: "\u2003\u2003",
+	`\,`: "\u2009", `\;`: "\u2005", `\!`: "",
+	`\neg`: "\u00AC", `\wedge`: "\u2227", `\vee`: "\u2228",
+	`\oplus`: "\u2295", `\otimes`: "\u2297",
+	`\hat`: "\u0302", `\bar`: "\u0304", `\dot`: "\u0307", `\ddot`: "\u0308",
+	`\tilde`: "\u0303", `\vec`: "\u20D7",
+}
+
+// latexToOmml converts a LaTeX math string to OMML (Office Math Markup Language).
+// It handles fractions, subscripts, superscripts, square roots, Greek letters,
+// and common operators.
+func latexToOmml(latex string) string {
+	latex = strings.TrimSpace(latex)
+	if latex == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	parseOmmlExpr(&b, latex)
+	return b.String()
+}
+
+func parseOmmlExpr(b *strings.Builder, expr string) {
+	i := 0
+	for i < len(expr) {
+		// Skip whitespace
+		if expr[i] == ' ' || expr[i] == '\t' || expr[i] == '\n' {
+			i++
+			continue
+		}
+
+		// Handle alignment characters from align environments
+		if expr[i] == '&' {
+			i++
+			continue
+		}
+
+		// Line breaks in multi-line math → ignore them
+		if i+1 < len(expr) && expr[i] == '\\' && expr[i+1] == '\\' {
+			i += 2
+			// Skip optional [dim]
+			if i < len(expr) && expr[i] == '[' {
+				for i < len(expr) && expr[i] != ']' {
+					i++
+				}
+				if i < len(expr) {
+					i++
+				}
+			}
+			continue
+		}
+
+		// \frac{num}{den}
+		if strings.HasPrefix(expr[i:], `\frac`) {
+			i += 5
+			num, end1, ok1 := extractBraceGroupGo(expr, skipWS(expr, i))
+			if ok1 {
+				den, end2, ok2 := extractBraceGroupGo(expr, skipWS(expr, end1))
+				if ok2 {
+					b.WriteString("<m:f><m:num>")
+					parseOmmlExpr(b, num)
+					b.WriteString("</m:num><m:den>")
+					parseOmmlExpr(b, den)
+					b.WriteString("</m:den></m:f>")
+					i = end2
+					continue
+				}
+			}
+		}
+
+		// \sqrt[n]{x} or \sqrt{x}
+		if strings.HasPrefix(expr[i:], `\sqrt`) {
+			i += 5
+			p := skipWS(expr, i)
+			degree := ""
+			if p < len(expr) && expr[p] == '[' {
+				end := strings.Index(expr[p:], "]")
+				if end >= 0 {
+					degree = expr[p+1 : p+end]
+					p = p + end + 1
+				}
+			}
+			content, end, ok := extractBraceGroupGo(expr, skipWS(expr, p))
+			if ok {
+				if degree != "" {
+					b.WriteString("<m:rad><m:radPr><m:degHide m:val=\"0\"/></m:radPr><m:deg>")
+					parseOmmlExpr(b, degree)
+					b.WriteString("</m:deg><m:e>")
+				} else {
+					b.WriteString("<m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg/><m:e>")
+				}
+				parseOmmlExpr(b, content)
+				b.WriteString("</m:e></m:rad>")
+				i = end
+				continue
+			}
+		}
+
+		// \sum, \prod, \int — nary operators
+		naryOps := map[string]string{
+			`\sum`: "\u2211", `\prod`: "\u220F", `\int`: "\u222B",
+			`\oint`: "\u222E", `\bigcup`: "\u22C3", `\bigcap`: "\u22C2",
+			`\coprod`: "\u2210", `\bigoplus`: "\u2A01", `\bigotimes`: "\u2A02",
+			`\iint`: "\u222C", `\iiint`: "\u222D",
+		}
+		matched := false
+		for cmd, chr := range naryOps {
+			if strings.HasPrefix(expr[i:], cmd) {
+				afterCmd := i + len(cmd)
+				// Check for subscript/superscript limits
+				sub, sup := "", ""
+				p := skipWS(expr, afterCmd)
+				if p < len(expr) && expr[p] == '_' {
+					content, end, ok := extractBraceOrChar(expr, p+1)
+					if ok {
+						sub = content
+						p = end
+					}
+				}
+				p = skipWS(expr, p)
+				if p < len(expr) && expr[p] == '^' {
+					content, end, ok := extractBraceOrChar(expr, p+1)
+					if ok {
+						sup = content
+						p = end
+					}
+				}
+				b.WriteString(fmt.Sprintf(`<m:nary><m:naryPr><m:chr m:val="%s"/></m:naryPr>`, chr))
+				b.WriteString("<m:sub>")
+				if sub != "" {
+					parseOmmlExpr(b, sub)
+				}
+				b.WriteString("</m:sub><m:sup>")
+				if sup != "" {
+					parseOmmlExpr(b, sup)
+				}
+				b.WriteString("</m:sup><m:e>")
+				// Parse the rest of the expression as the nary body
+				// (until end or next nary or close brace)
+				remaining := strings.TrimSpace(expr[p:])
+				parseOmmlExpr(b, remaining)
+				b.WriteString("</m:e></m:nary>")
+				i = len(expr)
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+
+		// \left( ... \right) — delimiter math
+		if strings.HasPrefix(expr[i:], `\left`) {
+			p := i + 5
+			if p < len(expr) {
+				openDelim := string(expr[p])
+				p++
+				// Find matching \right
+				depth := 1
+				start := p
+				for p < len(expr) {
+					if strings.HasPrefix(expr[p:], `\left`) {
+						depth++
+						p += 5
+					} else if strings.HasPrefix(expr[p:], `\right`) {
+						depth--
+						if depth == 0 {
+							innerContent := expr[start:p]
+							p += 6 // skip \right
+							closeDelim := ""
+							if p < len(expr) {
+								closeDelim = string(expr[p])
+								p++
+							}
+							openC := delimChar(openDelim)
+							closeC := delimChar(closeDelim)
+							b.WriteString(fmt.Sprintf(`<m:d><m:dPr><m:begChr m:val="%s"/><m:endChr m:val="%s"/></m:dPr><m:e>`, openC, closeC))
+							parseOmmlExpr(b, innerContent)
+							b.WriteString("</m:e></m:d>")
+							i = p
+							goto nextChar
+						}
+						p += 6
+					} else {
+						p++
+					}
+				}
+			}
+		}
+
+		// \text{...} or \mathrm{...} — regular text inside math
+		if strings.HasPrefix(expr[i:], `\text{`) || strings.HasPrefix(expr[i:], `\mathrm{`) ||
+			strings.HasPrefix(expr[i:], `\textrm{`) || strings.HasPrefix(expr[i:], `\mbox{`) {
+			cmdEnd := strings.Index(expr[i:], "{")
+			content, end, ok := extractBraceGroupGo(expr, i+cmdEnd)
+			if ok {
+				b.WriteString(fmt.Sprintf(`<m:r><m:rPr><m:nor/></m:rPr><w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr><m:t>%s</m:t></m:r>`, escapeXML(content)))
+				i = end
+				continue
+			}
+		}
+
+		// \mathbf{...} — bold math
+		if strings.HasPrefix(expr[i:], `\mathbf{`) || strings.HasPrefix(expr[i:], `\boldsymbol{`) || strings.HasPrefix(expr[i:], `\bm{`) {
+			cmdEnd := strings.Index(expr[i:], "{")
+			content, end, ok := extractBraceGroupGo(expr, i+cmdEnd)
+			if ok {
+				b.WriteString(fmt.Sprintf(`<m:r><m:rPr><m:sty m:val="b"/></m:rPr><m:t>%s</m:t></m:r>`, escapeXML(replaceGreek(content))))
+				i = end
+				continue
+			}
+		}
+
+		// Subscript/superscript: x_a, x^b, x_a^b
+		if i+1 < len(expr) && expr[i] == '\\' {
+			// This is a command — check if followed by sub/superscript
+			cmdEnd := i + 1
+			for cmdEnd < len(expr) && isLetter(expr[cmdEnd]) {
+				cmdEnd++
+			}
+			cmd := expr[i:cmdEnd]
+
+			// Check for known symbol + sub/super
+			if sym, ok := latexToUnicode[cmd]; ok {
+				p := skipWS(expr, cmdEnd)
+				hasSub := p < len(expr) && expr[p] == '_'
+				hasSup := p < len(expr) && expr[p] == '^'
+				if !hasSub && !hasSup {
+					b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, sym))
+					i = cmdEnd
+					continue
+				}
+			}
+		}
+
+		// Handle _ and ^ (subscripts and superscripts)
+		if i > 0 && (expr[i] == '_' || expr[i] == '^') {
+			// Already part of a previous element, skip
+		}
+		if expr[i] == '_' || expr[i] == '^' {
+			i++
+			continue
+		}
+
+		// Text characters with possible sub/superscripts
+		if expr[i] != '\\' && expr[i] != '{' && expr[i] != '}' {
+			ch := string(expr[i])
+			p := i + 1
+
+			// Check for sub/superscript
+			sub, sup := "", ""
+			if p < len(expr) && expr[p] == '_' {
+				content, end, ok := extractBraceOrChar(expr, p+1)
+				if ok {
+					sub = content
+					p = end
+				}
+			}
+			if p < len(expr) && expr[p] == '^' {
+				content, end, ok := extractBraceOrChar(expr, p+1)
+				if ok {
+					sup = content
+					p = end
+				}
+			}
+			// Check for sub after sup
+			if sub == "" && p < len(expr) && expr[p] == '_' {
+				content, end, ok := extractBraceOrChar(expr, p+1)
+				if ok {
+					sub = content
+					p = end
+				}
+			}
+
+			if sub != "" || sup != "" {
+				if sub != "" && sup != "" {
+					b.WriteString("<m:sSubSup><m:e>")
+					b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, escapeXML(ch)))
+					b.WriteString("</m:e><m:sub>")
+					parseOmmlExpr(b, sub)
+					b.WriteString("</m:sub><m:sup>")
+					parseOmmlExpr(b, sup)
+					b.WriteString("</m:sup></m:sSubSup>")
+				} else if sub != "" {
+					b.WriteString("<m:sSub><m:e>")
+					b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, escapeXML(ch)))
+					b.WriteString("</m:e><m:sub>")
+					parseOmmlExpr(b, sub)
+					b.WriteString("</m:sub></m:sSub>")
+				} else {
+					b.WriteString("<m:sSup><m:e>")
+					b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, escapeXML(ch)))
+					b.WriteString("</m:e><m:sup>")
+					parseOmmlExpr(b, sup)
+					b.WriteString("</m:sup></m:sSup>")
+				}
+				i = p
+				continue
+			}
+
+			b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, escapeXML(ch)))
+			i = p
+			continue
+		}
+
+		// LaTeX command
+		if expr[i] == '\\' {
+			cmdEnd := i + 1
+			for cmdEnd < len(expr) && isLetter(expr[cmdEnd]) {
+				cmdEnd++
+			}
+			if cmdEnd == i+1 && cmdEnd < len(expr) {
+				// Single special char like \\ \, \; etc.
+				cmdEnd++
+			}
+			cmd := expr[i:cmdEnd]
+
+			// Known symbol?
+			if sym, ok := latexToUnicode[cmd]; ok {
+				p := skipWS(expr, cmdEnd)
+
+				// Check for sub/superscript after symbol
+				sub, sup := "", ""
+				if p < len(expr) && expr[p] == '_' {
+					content, end, ok := extractBraceOrChar(expr, p+1)
+					if ok {
+						sub = content
+						p = end
+					}
+				}
+				p2 := skipWS(expr, p)
+				if p2 < len(expr) && expr[p2] == '^' {
+					content, end, ok := extractBraceOrChar(expr, p2+1)
+					if ok {
+						sup = content
+						p = end
+					}
+				}
+
+				if sub != "" || sup != "" {
+					if sub != "" && sup != "" {
+						b.WriteString("<m:sSubSup><m:e>")
+						b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, sym))
+						b.WriteString("</m:e><m:sub>")
+						parseOmmlExpr(b, sub)
+						b.WriteString("</m:sub><m:sup>")
+						parseOmmlExpr(b, sup)
+						b.WriteString("</m:sup></m:sSubSup>")
+					} else if sub != "" {
+						b.WriteString("<m:sSub><m:e>")
+						b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, sym))
+						b.WriteString("</m:e><m:sub>")
+						parseOmmlExpr(b, sub)
+						b.WriteString("</m:sub></m:sSub>")
+					} else {
+						b.WriteString("<m:sSup><m:e>")
+						b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, sym))
+						b.WriteString("</m:e><m:sup>")
+						parseOmmlExpr(b, sup)
+						b.WriteString("</m:sup></m:sSup>")
+					}
+					i = p
+					continue
+				}
+
+				b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, sym))
+				i = cmdEnd
+				continue
+			}
+
+			// Accents: \hat{x}, \bar{x}, etc.
+			accents := map[string]string{
+				`\hat`: "\u0302", `\check`: "\u030C", `\tilde`: "\u0303",
+				`\acute`: "\u0301", `\grave`: "\u0300", `\dot`: "\u0307",
+				`\ddot`: "\u0308", `\breve`: "\u0306", `\bar`: "\u0304",
+				`\vec`: "\u20D7", `\widehat`: "\u0302", `\widetilde`: "\u0303",
+				`\overline`: "\u0305",
+			}
+			if accent, ok := accents[cmd]; ok {
+				content, end, ok := extractBraceGroupGo(expr, skipWS(expr, cmdEnd))
+				if ok {
+					b.WriteString(fmt.Sprintf(`<m:acc><m:accPr><m:chr m:val="%s"/></m:accPr><m:e>`, accent))
+					parseOmmlExpr(b, content)
+					b.WriteString("</m:e></m:acc>")
+					i = end
+					continue
+				}
+			}
+
+			// Unknown command — render as text
+			cmdName := strings.TrimPrefix(cmd, "\\")
+			b.WriteString(fmt.Sprintf(`<m:r><m:t>%s</m:t></m:r>`, escapeXML(cmdName)))
+			i = cmdEnd
+			continue
+		}
+
+		// Braces — content group
+		if expr[i] == '{' {
+			content, end, ok := extractBraceGroupGo(expr, i)
+			if ok {
+				parseOmmlExpr(b, content)
+				i = end
+				continue
+			}
+		}
+
+		i++
+		continue
+
+	nextChar:
+	}
+}
+
+func skipWS(s string, i int) int {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n') {
+		i++
+	}
+	return i
+}
+
+func extractBraceOrChar(expr string, pos int) (string, int, bool) {
+	pos = skipWS(expr, pos)
+	if pos >= len(expr) {
+		return "", pos, false
+	}
+	if expr[pos] == '{' {
+		return extractBraceGroupGo(expr, pos)
+	}
+	// Single character
+	if expr[pos] == '\\' {
+		// Command
+		end := pos + 1
+		for end < len(expr) && isLetter(expr[end]) {
+			end++
+		}
+		if end == pos+1 && end < len(expr) {
+			end++
+		}
+		return expr[pos:end], end, true
+	}
+	return string(expr[pos]), pos + 1, true
+}
+
+func delimChar(s string) string {
+	switch s {
+	case "(":
+		return "("
+	case ")":
+		return ")"
+	case "[":
+		return "["
+	case "]":
+		return "]"
+	case "\\{", "{":
+		return "{"
+	case "\\}", "}":
+		return "}"
+	case "|":
+		return "|"
+	case ".", "":
+		return "" // invisible delimiter
+	default:
+		return s
+	}
+}
+
+func replaceGreek(s string) string {
+	result := s
+	for cmd, uni := range latexToUnicode {
+		result = strings.ReplaceAll(result, cmd, uni)
+	}
+	return result
+}
+
+// buildOmmlMathParagraph wraps LaTeX math content in a display math paragraph.
+func buildOmmlMathParagraph(latex string) string {
+	var b strings.Builder
+	b.WriteString("    <w:p>\n")
+	b.WriteString("      <w:pPr><w:jc w:val=\"center\"/></w:pPr>\n")
+	b.WriteString("      <m:oMathPara><m:oMath>\n")
+	b.WriteString(latexToOmml(latex))
+	b.WriteString("\n      </m:oMath></m:oMathPara>\n")
+	b.WriteString("    </w:p>\n")
+	return b.String()
+}
+
+// buildOmmlInlineMath wraps LaTeX math content in an inline OMML element.
+func buildOmmlInlineMath(latex string) string {
+	var b strings.Builder
+	b.WriteString("<m:oMath>")
+	b.WriteString(latexToOmml(latex))
+	b.WriteString("</m:oMath>")
+	return b.String()
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Static OOXML parts
 // ═══════════════════════════════════════════════════════════════
 
@@ -1490,6 +2032,7 @@ const contentTypesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+  <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
 </Types>`
 
 const relsXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1501,6 +2044,7 @@ const wordRelsXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
 </Relationships>`
 
 const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1508,15 +2052,17 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <w:docDefaults>
     <w:rPrDefault>
       <w:rPr>
-        <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>
-        <w:sz w:val="22"/>
-        <w:szCs w:val="22"/>
+        <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+        <w:sz w:val="24"/>
+        <w:szCs w:val="24"/>
         <w:lang w:val="en-US"/>
       </w:rPr>
     </w:rPrDefault>
     <w:pPrDefault>
       <w:pPr>
-        <w:spacing w:after="120" w:line="276" w:lineRule="auto"/>
+        <w:spacing w:after="0" w:line="240" w:lineRule="auto"/>
+        <w:jc w:val="both"/>
+        <w:ind w:firstLine="360"/>
       </w:pPr>
     </w:pPrDefault>
   </w:docDefaults>
@@ -1524,6 +2070,9 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <w:style w:type="paragraph" w:styleId="Normal" w:default="1">
     <w:name w:val="Normal"/>
     <w:qFormat/>
+    <w:pPr>
+      <w:spacing w:after="120"/>
+    </w:pPr>
   </w:style>
 
   <w:style w:type="paragraph" w:styleId="Title">
@@ -1531,14 +2080,14 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:basedOn w:val="Normal"/>
     <w:qFormat/>
     <w:pPr>
-      <w:spacing w:after="80" w:line="240" w:lineRule="auto"/>
+      <w:spacing w:before="240" w:after="120" w:line="240" w:lineRule="auto"/>
       <w:jc w:val="center"/>
+      <w:ind w:firstLine="0"/>
     </w:pPr>
     <w:rPr>
       <w:b/>
-      <w:sz w:val="44"/>
-      <w:szCs w:val="44"/>
-      <w:color w:val="111827"/>
+      <w:sz w:val="34"/>
+      <w:szCs w:val="34"/>
     </w:rPr>
   </w:style>
 
@@ -1548,10 +2097,10 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:pPr>
       <w:spacing w:after="60"/>
       <w:jc w:val="center"/>
+      <w:ind w:firstLine="0"/>
     </w:pPr>
     <w:rPr>
       <w:sz w:val="24"/>
-      <w:color w:val="4B5563"/>
     </w:rPr>
   </w:style>
 
@@ -1561,10 +2110,10 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:pPr>
       <w:spacing w:after="200"/>
       <w:jc w:val="center"/>
+      <w:ind w:firstLine="0"/>
     </w:pPr>
     <w:rPr>
-      <w:sz w:val="22"/>
-      <w:color w:val="6B7280"/>
+      <w:sz w:val="24"/>
     </w:rPr>
   </w:style>
 
@@ -1572,12 +2121,11 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:name w:val="Abstract Text"/>
     <w:basedOn w:val="Normal"/>
     <w:pPr>
-      <w:ind w:left="720" w:right="720"/>
+      <w:ind w:left="720" w:right="720" w:firstLine="0"/>
       <w:spacing w:after="200"/>
     </w:pPr>
     <w:rPr>
-      <w:i/>
-      <w:sz w:val="21"/>
+      <w:sz w:val="20"/>
     </w:rPr>
   </w:style>
 
@@ -1587,13 +2135,13 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:qFormat/>
     <w:pPr>
       <w:keepNext/>
-      <w:spacing w:before="320" w:after="100" w:line="240" w:lineRule="auto"/>
+      <w:spacing w:before="360" w:after="120" w:line="240" w:lineRule="auto"/>
+      <w:ind w:firstLine="0"/>
     </w:pPr>
     <w:rPr>
       <w:b/>
-      <w:sz w:val="30"/>
-      <w:szCs w:val="30"/>
-      <w:color w:val="111827"/>
+      <w:sz w:val="28"/>
+      <w:szCs w:val="28"/>
     </w:rPr>
   </w:style>
 
@@ -1604,12 +2152,12 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:pPr>
       <w:keepNext/>
       <w:spacing w:before="240" w:after="80" w:line="240" w:lineRule="auto"/>
+      <w:ind w:firstLine="0"/>
     </w:pPr>
     <w:rPr>
       <w:b/>
       <w:sz w:val="26"/>
       <w:szCs w:val="26"/>
-      <w:color w:val="1F2937"/>
     </w:rPr>
   </w:style>
 
@@ -1620,13 +2168,13 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:pPr>
       <w:keepNext/>
       <w:spacing w:before="200" w:after="60"/>
+      <w:ind w:firstLine="0"/>
     </w:pPr>
     <w:rPr>
       <w:b/>
       <w:i/>
-      <w:sz w:val="23"/>
-      <w:szCs w:val="23"/>
-      <w:color w:val="374151"/>
+      <w:sz w:val="24"/>
+      <w:szCs w:val="24"/>
     </w:rPr>
   </w:style>
 
@@ -1635,8 +2183,8 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:basedOn w:val="Normal"/>
     <w:pPr>
       <w:spacing w:before="120" w:after="120"/>
-      <w:ind w:left="720"/>
       <w:jc w:val="center"/>
+      <w:ind w:firstLine="0"/>
     </w:pPr>
     <w:rPr>
       <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/>
@@ -1649,13 +2197,13 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:basedOn w:val="Normal"/>
     <w:pPr>
       <w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>
-      <w:ind w:left="360"/>
-      <w:shd w:val="clear" w:color="auto" w:fill="F3F4F6"/>
+      <w:ind w:left="360" w:firstLine="0"/>
+      <w:shd w:val="clear" w:color="auto" w:fill="F5F5F5"/>
     </w:pPr>
     <w:rPr>
       <w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>
-      <w:sz w:val="20"/>
-      <w:szCs w:val="20"/>
+      <w:sz w:val="18"/>
+      <w:szCs w:val="18"/>
     </w:rPr>
   </w:style>
 
@@ -1666,7 +2214,7 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
       <w:numPr>
         <w:numId w:val="1"/>
       </w:numPr>
-      <w:ind w:left="720" w:hanging="360"/>
+      <w:ind w:left="720" w:hanging="360" w:firstLineChars="0" w:firstLine="0"/>
     </w:pPr>
   </w:style>
 
@@ -1677,7 +2225,7 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
       <w:numPr>
         <w:numId w:val="2"/>
       </w:numPr>
-      <w:ind w:left="720" w:hanging="360"/>
+      <w:ind w:left="720" w:hanging="360" w:firstLineChars="0" w:firstLine="0"/>
     </w:pPr>
   </w:style>
 
@@ -1724,6 +2272,26 @@ const numberingXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:abstractNumId w:val="1"/>
   </w:num>
 </w:numbering>`
+
+const settingsXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+  <m:mathPr>
+    <m:mathFont m:val="Cambria Math"/>
+    <m:brkBin m:val="before"/>
+    <m:brkBinSub m:val="--"/>
+    <m:smallFrac m:val="0"/>
+    <m:dispDef/>
+    <m:lMargin m:val="0"/>
+    <m:rMargin m:val="0"/>
+    <m:defJc m:val="centerGroup"/>
+    <m:wrapIndent m:val="1440"/>
+    <m:intLim m:val="subSup"/>
+    <m:naryLim m:val="undOvr"/>
+  </m:mathPr>
+  <w:defaultTabStop w:val="720"/>
+  <w:characterSpacingControl w:val="doNotCompress"/>
+</w:settings>`
 
 // ═══════════════════════════════════════════════════════════════
 // Public entry point

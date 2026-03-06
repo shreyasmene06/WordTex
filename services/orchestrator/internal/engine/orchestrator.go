@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -29,18 +30,26 @@ const (
 	StateCancelled      JobState = "cancelled"
 )
 
+// FileAttachment is a supplementary file (e.g. .cls, .sty, .bib, images)
+// that travels with the main source.
+type FileAttachment struct {
+	Filename string `json:"filename"`
+	Data     []byte `json:"data"`
+}
+
 // Job represents a conversion job in the orchestration pipeline.
 type Job struct {
-	ID               string    `json:"id"`
-	Direction        string    `json:"direction"`
-	State            JobState  `json:"state"`
-	SourceFilename   string    `json:"source_filename"`
-	SourceData       []byte    `json:"source_data,omitempty"`
-	TemplateOverride string    `json:"template_override,omitempty"`
-	EmbedAnchors     bool      `json:"embed_anchors"`
-	SVGFallbacks     bool      `json:"svg_fallbacks"`
-	PDFEngine        string    `json:"pdf_engine,omitempty"`
-	SubmittedAt      time.Time `json:"submitted_at"`
+	ID               string           `json:"id"`
+	Direction        string           `json:"direction"`
+	State            JobState         `json:"state"`
+	SourceFilename   string           `json:"source_filename"`
+	SourceData       []byte           `json:"source_data,omitempty"`
+	AdditionalFiles  []FileAttachment `json:"additional_files,omitempty"`
+	TemplateOverride string           `json:"template_override,omitempty"`
+	EmbedAnchors     bool             `json:"embed_anchors"`
+	SVGFallbacks     bool             `json:"svg_fallbacks"`
+	PDFEngine        string           `json:"pdf_engine,omitempty"`
+	SubmittedAt      time.Time        `json:"submitted_at"`
 	StartedAt        time.Time `json:"started_at,omitempty"`
 	CompletedAt      time.Time `json:"completed_at,omitempty"`
 	Progress         float64   `json:"progress"`
@@ -163,10 +172,15 @@ func (o *Orchestrator) ConsumeJobs(ctx context.Context) error {
 
 func (o *Orchestrator) processJob(ctx context.Context, delivery amqp.Delivery) {
 	var jobMsg struct {
-		JobID          string `json:"job_id"`
-		Direction      string `json:"direction"`
-		SourceFilename string `json:"source_filename"`
-		SourceData     []byte `json:"source_data"`
+		JobID            string           `json:"job_id"`
+		Direction        string           `json:"direction"`
+		SourceFilename   string           `json:"source_filename"`
+		SourceData       []byte           `json:"source_data"`
+		AdditionalFiles  []FileAttachment `json:"additional_files,omitempty"`
+		TemplateOverride string           `json:"template_override,omitempty"`
+		EmbedAnchors     bool             `json:"embed_anchors"`
+		SVGFallbacks     bool             `json:"svg_fallbacks"`
+		PDFEngine        string           `json:"pdf_engine,omitempty"`
 	}
 
 	if err := json.Unmarshal(delivery.Body, &jobMsg); err != nil {
@@ -182,12 +196,17 @@ func (o *Orchestrator) processJob(ctx context.Context, delivery amqp.Delivery) {
 	)
 
 	job := &Job{
-		ID:             jobMsg.JobID,
-		Direction:      jobMsg.Direction,
-		State:          StateQueued,
-		SourceFilename: jobMsg.SourceFilename,
-		SourceData:     jobMsg.SourceData,
-		StartedAt:      time.Now(),
+		ID:               jobMsg.JobID,
+		Direction:        jobMsg.Direction,
+		State:            StateQueued,
+		SourceFilename:   jobMsg.SourceFilename,
+		SourceData:       jobMsg.SourceData,
+		AdditionalFiles:  jobMsg.AdditionalFiles,
+		TemplateOverride: jobMsg.TemplateOverride,
+		EmbedAnchors:     jobMsg.EmbedAnchors,
+		SVGFallbacks:     jobMsg.SVGFallbacks,
+		PDFEngine:        jobMsg.PDFEngine,
+		StartedAt:        time.Now(),
 	}
 
 	// Save initial state
@@ -238,37 +257,24 @@ func (o *Orchestrator) executePipeline(ctx context.Context, job *Job) error {
 }
 
 func (o *Orchestrator) latexToWordPipeline(ctx context.Context, job *Job) error {
-	// Stage 1: Parse LaTeX → SIR
-	o.updateProgress(ctx, job, StateParsing, 10, "Parsing LaTeX source")
+	o.updateProgress(ctx, job, StateParsing, 10, "Preparing LaTeX source")
+
+	o.updateProgress(ctx, job, StateRendering, 30, "Converting LaTeX → DOCX (pandoc)")
 	start := time.Now()
-	// TODO: Call SIR Core gRPC service
-	job.Metrics.ParseDurationMS = time.Since(start).Milliseconds()
 
-	// Stage 2: Transform SIR → OOXML
-	o.updateProgress(ctx, job, StateTransforming, 40, "Transforming to Word format")
-	start = time.Now()
-	// TODO: Call SIR Core for SIR → OOXML transformation
-	job.Metrics.TransformDurationMS = time.Since(start).Milliseconds()
-
-	// Stage 3: Render final .docx
-	o.updateProgress(ctx, job, StateRendering, 70, "Generating .docx file")
-	start = time.Now()
-
-	// Convert LaTeX source to a properly formatted .docx
-	docx, err := ConvertLatexToDocx(string(job.SourceData))
+	// Use pandoc for high-fidelity conversion (OMML math, proper styles).
+	// Falls back to the Go-based converter if pandoc is not installed.
+	docx, err := ConvertLatexToDocxPandoc(ctx, job.SourceData, job.AdditionalFiles)
 	if err != nil {
-		return fmt.Errorf("docx generation failed: %w", err)
+		return fmt.Errorf("DOCX generation failed: %w", err)
 	}
+	job.Metrics.RenderDurationMS = time.Since(start).Milliseconds()
+
 	baseName := strings.TrimSuffix(job.SourceFilename, ".tex")
 	job.OutputFilename = baseName + ".docx"
 	job.OutputData = docx
 
-	job.Metrics.RenderDurationMS = time.Since(start).Milliseconds()
-
-	// Stage 4: Post-processing
 	o.updateProgress(ctx, job, StatePostProcessing, 90, "Finalizing output")
-	// TODO: Run quality checks, inject anchor metadata
-
 	o.updateProgress(ctx, job, StateCompleted, 100, "Complete")
 	return nil
 }
@@ -293,25 +299,128 @@ func (o *Orchestrator) wordToLatexPipeline(ctx context.Context, job *Job) error 
 
 func (o *Orchestrator) latexToPdfPipeline(ctx context.Context, job *Job) error {
 	o.updateProgress(ctx, job, StateParsing, 10, "Preparing LaTeX compilation")
-	o.updateProgress(ctx, job, StateRendering, 30, "Compiling with "+job.PDFEngine)
 
-	// Stub: produce a minimal valid PDF
+	// Determine which engine to use; auto-detect if not specified or if
+	// the source contains packages that require a specific engine.
+	engine := job.PDFEngine
+	if engine == "" {
+		engine = detectLatexEngine(string(job.SourceData))
+	}
+
+	o.logger.Infow("Compiling LaTeX",
+		"job_id", job.ID,
+		"engine", engine,
+		"filename", job.SourceFilename,
+		"additional_files", len(job.AdditionalFiles),
+	)
+
+	o.updateProgress(ctx, job, StateRendering, 30, "Compiling with "+engine)
+
+	start := time.Now()
+	pdfData, err := CompileLatexToPDF(ctx, job.SourceData, engine, job.AdditionalFiles)
+	if err != nil {
+		// Try the other engines as fallbacks.  Order: pdflatex → xelatex → lualatex.
+		fallbacks := []string{"pdflatex", "xelatex", "lualatex"}
+		var lastErr error = err
+		for _, fb := range fallbacks {
+			if fb == engine {
+				continue
+			}
+			o.logger.Warnw("Compilation failed, retrying with fallback engine",
+				"job_id", job.ID,
+				"original_engine", engine,
+				"fallback_engine", fb,
+				"error", lastErr,
+			)
+			o.updateProgress(ctx, job, StateRendering, 40, "Retrying with "+fb)
+			pdfData, lastErr = CompileLatexToPDF(ctx, job.SourceData, fb, job.AdditionalFiles)
+			if lastErr == nil {
+				engine = fb
+				break
+			}
+		}
+		if lastErr != nil {
+			return fmt.Errorf("LaTeX compilation failed: %w", lastErr)
+		}
+		err = nil
+	}
+	job.Metrics.RenderDurationMS = time.Since(start).Milliseconds()
+
 	baseName := strings.TrimSuffix(job.SourceFilename, ".tex")
 	job.OutputFilename = baseName + ".pdf"
-	job.OutputData = buildStubPdf(job.SourceFilename)
+	job.OutputData = pdfData
 
 	o.updateProgress(ctx, job, StatePostProcessing, 90, "Resolving cross-references")
 	o.updateProgress(ctx, job, StateCompleted, 100, "Complete")
 	return nil
 }
 
+// detectLatexEngine guesses the best PDF engine by scanning the LaTeX preamble
+// for packages that are engine-specific.
+func detectLatexEngine(source string) string {
+	// pdfTeX-only primitives — if present, the document was written for pdflatex
+	pdfTexPrimitives := []string{
+		`\pdfglyphtounicode`,
+		`\pdfgentounicode`,
+		`\pdfsuppresswarningpagegroup`,
+		`\pdfcompresslevel`,
+		`\pdfminorversion`,
+		`\pdfoutput`,
+		`\pdfobjcompresslevel`,
+		`\pdfinclusionerrorlevel`,
+	}
+	for _, prim := range pdfTexPrimitives {
+		if strings.Contains(source, prim) {
+			return "pdflatex"
+		}
+	}
+
+	// Packages that REQUIRE xelatex or lualatex (they use system fonts / Unicode)
+	xeluaPackages := []string{
+		"fontspec", "unicode-math", "mathspec", "polyglossia",
+		"xeCJK", "luatexja",
+	}
+	for _, pkg := range xeluaPackages {
+		if strings.Contains(source, `\usepackage{`+pkg+`}`) ||
+			strings.Contains(source, `\usepackage[`) && strings.Contains(source, pkg) ||
+			strings.Contains(source, `\RequirePackage{`+pkg+`}`) {
+			return "xelatex"
+		}
+	}
+	// Document classes that commonly require xelatex
+	xeClasses := []string{
+		"awesome-cv", "moderncv", "friggeri-cv", "altacv",
+		"limecv", "twentysecondcv",
+	}
+	for _, cls := range xeClasses {
+		if strings.Contains(source, `\documentclass{`+cls+`}`) ||
+			strings.Contains(source, `\documentclass[`) && strings.Contains(source, cls) {
+			return "xelatex"
+		}
+	}
+	// fontawesome requires xelatex/lualatex
+	if strings.Contains(source, "fontawesome") {
+		return "xelatex"
+	}
+	// Default to pdflatex — it's the fastest and most common engine.
+	// The fallback loop will try xelatex/lualatex if pdflatex fails.
+	return "pdflatex"
+}
+
 func (o *Orchestrator) wordToPdfPipeline(ctx context.Context, job *Job) error {
 	o.updateProgress(ctx, job, StateParsing, 10, "Loading Word document")
 	o.updateProgress(ctx, job, StateRendering, 40, "Rendering to PDF")
 
+	// For Word → PDF, try using libreoffice if available, otherwise stub
 	baseName := strings.TrimSuffix(job.SourceFilename, ".docx")
 	job.OutputFilename = baseName + ".pdf"
-	job.OutputData = buildStubPdf(job.SourceFilename)
+
+	if _, err := exec.LookPath("libreoffice"); err == nil {
+		// TODO: implement LibreOffice-based Word→PDF conversion
+		job.OutputData = buildStubPdf(job.SourceFilename)
+	} else {
+		job.OutputData = buildStubPdf(job.SourceFilename)
+	}
 
 	o.updateProgress(ctx, job, StateCompleted, 100, "Complete")
 	return nil

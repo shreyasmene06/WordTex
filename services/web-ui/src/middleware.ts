@@ -21,7 +21,25 @@ export default auth(async (req) => {
 
   const session = req.auth;
 
+  // In development, allow unauthenticated API requests through
+  // (the gateway will still validate its own JWT if configured)
   if (!session?.user) {
+    if (process.env.NODE_ENV === "development") {
+      // Mint a dev token so the gateway doesn't reject the request
+      const token = await new SignJWT({
+        sub: "dev-user",
+        email: "dev@wordtex.local",
+      })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("1h")
+        .sign(JWT_SECRET);
+
+      const requestHeaders = new Headers(req.headers);
+      requestHeaders.set("Authorization", `Bearer ${token}`);
+      return NextResponse.next({ request: { headers: requestHeaders } });
+    }
+
     return NextResponse.json(
       { error: "Not authenticated" },
       { status: 401 }

@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRef, useCallback } from "react";
 import {
   submitConversion,
   getJobStatus,
@@ -8,8 +9,8 @@ import {
   getTemplate,
   healthCheck,
 } from "./api";
-import { useJobsStore } from "./stores";
-import type { ConversionOptions } from "./types";
+import { useJobsStore, useEditorStore } from "./stores";
+import type { ConversionOptions, ConversionJob } from "./types";
 
 // ─── Conversion Hooks ───────────────────────────────────────────
 
@@ -26,7 +27,26 @@ export function useSubmitConversion() {
       options: ConversionOptions;
       additionalFiles?: File[];
     }) => submitConversion(file, options, additionalFiles),
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
+      // Register the job in the store so JobPoller picks it up
+      const { addJob, setActiveJob } = useJobsStore.getState();
+      const job: ConversionJob = {
+        id: data.job_id,
+        direction: variables.options.direction,
+        status: data.status,
+        progress: 0,
+        sourceFilename: variables.file.name,
+        createdAt: new Date(),
+      };
+      addJob(job);
+      setActiveJob(data.job_id);
+
+      // Only clear preview when this is a PDF compile job
+      // (don't clear it for a DOCX download job)
+      if (variables.options.direction === "latex_to_pdf") {
+        useEditorStore.getState().setPreviewUrl(null);
+      }
+
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
@@ -78,6 +98,75 @@ export function useDownloadResult() {
       window.URL.revokeObjectURL(url);
     },
   });
+}
+
+// ─── Download DOCX Hook ─────────────────────────────────────────
+// Self-contained: submit → poll → download.  Does NOT touch the
+// active job or preview pane, so the PDF stays visible.
+
+type DocxDownloadState = "idle" | "converting" | "downloading" | "done" | "error";
+
+export function useDownloadDocx() {
+  const stateRef = useRef<DocxDownloadState>("idle");
+  const abortRef = useRef(false);
+
+  const mutation = useMutation({
+    mutationFn: async ({
+      source,
+      filename,
+    }: {
+      source: string;
+      filename: string;
+    }): Promise<void> => {
+      stateRef.current = "converting";
+      abortRef.current = false;
+
+      // 1. Submit latex_to_word job
+      const file = new File([source], filename, { type: "text/plain" });
+      const { job_id } = await submitConversion(file, {
+        direction: "latex_to_word",
+      });
+
+      // 2. Poll until terminal
+      const TERMINAL = new Set(["completed", "failed", "cancelled"]);
+      let status = "";
+      let outputFilename = "";
+      for (let i = 0; i < 120; i++) {
+        if (abortRef.current) throw new Error("Cancelled");
+        await new Promise((r) => setTimeout(r, 1_500));
+        const res = await getJobStatus(job_id);
+        status = res.status;
+        outputFilename = res.output_filename ?? "";
+        if (TERMINAL.has(status)) break;
+      }
+
+      if (status !== "completed") {
+        throw new Error(`DOCX conversion ${status || "timed out"}`);
+      }
+
+      // 3. Download the blob and trigger browser save
+      stateRef.current = "downloading";
+      const blob = await downloadResult(job_id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = outputFilename || "document.docx";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      stateRef.current = "done";
+    },
+    onError: () => {
+      stateRef.current = "error";
+    },
+  });
+
+  const cancel = useCallback(() => {
+    abortRef.current = true;
+  }, []);
+
+  return { ...mutation, cancel, stateRef };
 }
 
 // ─── Template Hooks ─────────────────────────────────────────────

@@ -135,6 +135,7 @@ interface EditorState {
   sourceContent: string;
   sourceLanguage: "latex" | "xml" | "json";
   previewUrl: string | null;
+  downloadUrl: string | null;
   isSyncScrollEnabled: boolean;
   editorFontSize: number;
   isEditorVisible: boolean;
@@ -144,6 +145,7 @@ interface EditorState {
   setSourceContent: (content: string) => void;
   setSourceLanguage: (lang: "latex" | "xml" | "json") => void;
   setPreviewUrl: (url: string | null) => void;
+  setDownloadUrl: (url: string | null) => void;
   setSyncScroll: (v: boolean) => void;
   setEditorFontSize: (size: number) => void;
   toggleEditor: () => void;
@@ -155,6 +157,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   sourceContent: "",
   sourceLanguage: "latex",
   previewUrl: null,
+  downloadUrl: null,
   isSyncScrollEnabled: true,
   editorFontSize: 14,
   isEditorVisible: true,
@@ -164,6 +167,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   setSourceContent: (sourceContent) => set({ sourceContent }),
   setSourceLanguage: (sourceLanguage) => set({ sourceLanguage }),
   setPreviewUrl: (previewUrl) => set({ previewUrl }),
+  setDownloadUrl: (downloadUrl) => set({ downloadUrl }),
   setSyncScroll: (isSyncScrollEnabled) => set({ isSyncScrollEnabled }),
   setEditorFontSize: (editorFontSize) => set({ editorFontSize }),
   toggleEditor: () =>
